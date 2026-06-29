@@ -23,32 +23,24 @@ state = {
     "prev_top_symbols": [],  # symbols from previous scan for double confirmation
 }
 
-PAIRS = [
-    "BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
-    "DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","DOT-USDT",
-    "MATIC-USDT","UNI-USDT","LTC-USDT","BCH-USDT","ATOM-USDT",
-    "ETC-USDT","APT-USDT","ARB-USDT","OP-USDT","SUI-USDT",
-    "INJ-USDT","TIA-USDT","SEI-USDT","WLD-USDT","PEPE-USDT",
-    "SHIB-USDT","FLOKI-USDT","BONK-USDT","WIF-USDT","JUP-USDT",
-    "RNDR-USDT","FET-USDT","GRT-USDT","LDO-USDT","AAVE-USDT",
-    "CRV-USDT","MKR-USDT","IMX-USDT","SAND-USDT","MANA-USDT",
-    "AXS-USDT","BLUR-USDT","DYDX-USDT","GMX-USDT","PENDLE-USDT",
-    "STX-USDT","HBAR-USDT","NEAR-USDT","FTM-USDT","FLOW-USDT",
-    "TRX-USDT","THETA-USDT","XLM-USDT","EOS-USDT","NEO-USDT",
-    "ORDI-USDT","SATS-USDT","BOME-USDT","MEW-USDT","TURBO-USDT",
-    "MEME-USDT","NEIRO-USDT","PNUT-USDT","ACT-USDT","GOAT-USDT",
-    "ANIME-USDT","KAITO-USDT","MOVE-USDT","HYPE-USDT","S-USDT",
-    "MAGIC-USDT","AEVO-USDT","PUMP-USDT","GAS-USDT","NES-USDT",
-    "BASED-USDT","LSK-USDT","SCR-USDT","SENT-USDT","PROS-USDT",
-    "QTUM-USDT","LPT-USDT","WAXP-USDT","ONE-USDT","CHZ-USDT",
-    "BAND-USDT","BAL-USDT","ANKR-USDT","CELO-USDT","AUDIO-USDT",
-    "DODO-USDT","XVS-USDT","TWT-USDT","REEF-USDT","SUPER-USDT",
-    "PEOPLE-USDT","GTC-USDT","CLV-USDT","UNFI-USDT","DENT-USDT",
-    "OL-USDT","ROBO-USDT","KMNO-USDT","SONIC-USDT","AIXBT-USDT",
-    "YB-USDT","CTC-USDT","ZORA-USDT","BERA-USDT","IP-USDT",
-    "LAYER-USDT","VINE-USDT","PI-USDT","TRUMP-USDT","LRC-USDT",
-    "ZRX-USDT","BAT-USDT","ENJ-USDT","STORJ-USDT","PAXG-USDT",
-]
+PAIRS = []  # loaded dynamically from OKX
+
+def load_pairs():
+    global PAIRS
+    try:
+        r = requests.get(f"{OKX_BASE}/api/v5/public/instruments?instType=SPOT", timeout=10)
+        instruments = r.json().get("data", [])
+        pairs = [i["instId"] for i in instruments if i["instId"].endswith("-USDT") and i.get("state") == "live"]
+        # Exclude stablecoins and wrapped tokens
+        exclude = {"USDC-USDT","BUSD-USDT","TUSD-USDT","USDP-USDT","DAI-USDT","FRAX-USDT","USDD-USDT","WBTC-USDT","WETH-USDT"}
+        pairs = [p for p in pairs if p not in exclude]
+        PAIRS = sorted(pairs)
+        log.info(f"Loaded {len(PAIRS)} pairs from OKX")
+    except Exception as e:
+        log.error(f"Failed to load pairs: {e}")
+        # Fallback to basic pairs
+        PAIRS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
+                 "DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","DOT-USDT"]
 
 SCREEN_PROMPT = """You are an institutional crypto momentum analyst for OKX spot market.
 Analyze the provided pairs with full technical data and select TOP 3 most likely to rise in next 60 minutes.
