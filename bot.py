@@ -10,7 +10,7 @@ INTERVAL_MIN   = int(os.environ.get("INTERVAL_MIN", "15"))
 SESSION_START  = int(os.environ.get("SESSION_START_UTC", "7"))
 SESSION_END    = int(os.environ.get("SESSION_END_UTC", "21"))
 OKX_BASE = "https://www.okx.com"
-LUNARCRUSH_KEY = "535xovgkrmuuaaf6rl7x9kfkn9mqz9secgxhnhkz8"
+LUNARCRUSH_KEY =  # v2 "535xovgkrmuuaaf6rl7x9kfkn9mqz9secgxhnhkz8"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler()])
 log = logging.getLogger("JARVIS")
