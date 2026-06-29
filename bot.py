@@ -36,26 +36,49 @@ def slog(msg, level="INFO"):
 
 PAIRS = []  # loaded dynamically from OKX
 
+BASE_PAIRS = [
+    "BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
+    "DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","DOT-USDT",
+    "MATIC-USDT","UNI-USDT","LTC-USDT","BCH-USDT","ATOM-USDT",
+    "ETC-USDT","APT-USDT","ARB-USDT","OP-USDT","SUI-USDT",
+    "INJ-USDT","TIA-USDT","SEI-USDT","WLD-USDT","PEPE-USDT",
+    "SHIB-USDT","FLOKI-USDT","BONK-USDT","WIF-USDT","JUP-USDT",
+    "RNDR-USDT","FET-USDT","GRT-USDT","LDO-USDT","AAVE-USDT",
+    "CRV-USDT","MKR-USDT","IMX-USDT","SAND-USDT","MANA-USDT",
+    "AXS-USDT","BLUR-USDT","DYDX-USDT","GMX-USDT","PENDLE-USDT",
+    "STX-USDT","HBAR-USDT","NEAR-USDT","FTM-USDT","FLOW-USDT",
+    "TRX-USDT","THETA-USDT","XLM-USDT","EOS-USDT","NEO-USDT",
+    "ORDI-USDT","SATS-USDT","BOME-USDT","MEW-USDT","TURBO-USDT",
+    "MEME-USDT","NEIRO-USDT","PNUT-USDT","ACT-USDT","GOAT-USDT",
+    "ANIME-USDT","KAITO-USDT","MOVE-USDT","HYPE-USDT","S-USDT",
+    "MAGIC-USDT","AEVO-USDT","PUMP-USDT","GAS-USDT","NES-USDT",
+    "VINE-USDT","LSK-USDT","SCR-USDT","SENT-USDT","QTUM-USDT",
+    "LPT-USDT","WAXP-USDT","ONE-USDT","CHZ-USDT","BAND-USDT",
+    "BAL-USDT","ANKR-USDT","CELO-USDT","PEOPLE-USDT","DODO-USDT",
+    "TWT-USDT","SUPER-USDT","SONIC-USDT","AIXBT-USDT","BERA-USDT",
+    "IP-USDT","LAYER-USDT","PI-USDT","TRUMP-USDT","ZRX-USDT",
+    "BAT-USDT","ENJ-USDT","STORJ-USDT","GAS-USDT","ZORA-USDT",
+]
+
 def load_pairs():
     global PAIRS
+    PAIRS = list(dict.fromkeys(BASE_PAIRS))  # deduplicate
+    state["pairs_loaded"] = len(PAIRS)
+    state["status"] = "ready"
+    slog(f"Using {len(PAIRS)} base pairs")
+    # Try to extend with OKX dynamic list
     try:
-        state["status"] = "loading_pairs"
         r = requests.get(f"{OKX_BASE}/api/v5/public/instruments?instType=SPOT", timeout=10)
         instruments = r.json().get("data", [])
-        pairs = [i["instId"] for i in instruments if i["instId"].endswith("-USDT") and i.get("state") == "live"]
         exclude = {"USDC-USDT","BUSD-USDT","TUSD-USDT","USDP-USDT","DAI-USDT","FRAX-USDT","USDD-USDT","WBTC-USDT","WETH-USDT"}
-        pairs = [p for p in pairs if p not in exclude]
-        PAIRS = sorted(pairs)
-        state["pairs_loaded"] = len(PAIRS)
-        state["status"] = "ready"
-        slog(f"Loaded {len(PAIRS)} pairs from OKX")
+        extra = [i["instId"] for i in instruments if i["instId"].endswith("-USDT") and i.get("state") == "live" and i["instId"] not in exclude]
+        if extra:
+            all_pairs = list(dict.fromkeys(BASE_PAIRS + extra))
+            PAIRS = all_pairs
+            state["pairs_loaded"] = len(PAIRS)
+            slog(f"Extended to {len(PAIRS)} pairs from OKX")
     except Exception as e:
-        state["last_error"] = str(e)
-        state["status"] = "error_loading_pairs"
-        slog(f"Failed to load pairs: {e}", "ERROR")
-        PAIRS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
-                 "DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","DOT-USDT"]
-        state["pairs_loaded"] = len(PAIRS)
+        slog(f"OKX dynamic load failed, using base list: {e}", "WARN")
 
 SCREEN_PROMPT = """You are an institutional crypto momentum analyst for OKX spot market.
 Analyze the provided pairs with full technical data and select TOP 3 most likely to rise in next 60 minutes.
