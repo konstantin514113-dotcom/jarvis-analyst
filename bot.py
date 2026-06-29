@@ -20,27 +20,42 @@ state = {
     "next_scan": None,
     "scan_count": 0,
     "history": [],
-    "prev_top_symbols": [],  # symbols from previous scan for double confirmation
+    "prev_top_symbols": [],
+    "logs": [],  # last 20 log lines
+    "status": "starting",
+    "pairs_loaded": 0,
+    "last_error": None,
 }
+
+def slog(msg, level="INFO"):
+    line = f"{datetime.utcnow().strftime('%H:%M:%S')} [{level}] {msg}"
+    log.info(msg)
+    state["logs"].append(line)
+    if len(state["logs"]) > 30:
+        state["logs"] = state["logs"][-30:]
 
 PAIRS = []  # loaded dynamically from OKX
 
 def load_pairs():
     global PAIRS
     try:
+        state["status"] = "loading_pairs"
         r = requests.get(f"{OKX_BASE}/api/v5/public/instruments?instType=SPOT", timeout=10)
         instruments = r.json().get("data", [])
         pairs = [i["instId"] for i in instruments if i["instId"].endswith("-USDT") and i.get("state") == "live"]
-        # Exclude stablecoins and wrapped tokens
         exclude = {"USDC-USDT","BUSD-USDT","TUSD-USDT","USDP-USDT","DAI-USDT","FRAX-USDT","USDD-USDT","WBTC-USDT","WETH-USDT"}
         pairs = [p for p in pairs if p not in exclude]
         PAIRS = sorted(pairs)
-        log.info(f"Loaded {len(PAIRS)} pairs from OKX")
+        state["pairs_loaded"] = len(PAIRS)
+        state["status"] = "ready"
+        slog(f"Loaded {len(PAIRS)} pairs from OKX")
     except Exception as e:
-        log.error(f"Failed to load pairs: {e}")
-        # Fallback to basic pairs
+        state["last_error"] = str(e)
+        state["status"] = "error_loading_pairs"
+        slog(f"Failed to load pairs: {e}", "ERROR")
         PAIRS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
                  "DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","DOT-USDT"]
+        state["pairs_loaded"] = len(PAIRS)
 
 SCREEN_PROMPT = """You are an institutional crypto momentum analyst for OKX spot market.
 Analyze the provided pairs with full technical data and select TOP 3 most likely to rise in next 60 minutes.
@@ -215,11 +230,14 @@ def run_cycle():
     # Reset history at start of day
     if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
         state["history"] = []
-    log.info(f"=== Cycle {now.strftime('%H:%M UTC')} ===")
+    slog(f"=== Cycle {now.strftime('%H:%M UTC')} ===")
+    state["status"] = "scanning"
     try:
         candidates = scan()
         if not candidates:
             state["prev_top_symbols"] = []
+            state["status"] = "waiting"
+            slog("No candidates found")
             return
 
         # Double-scan confirmation: only pairs seen in previous scan too
@@ -523,6 +541,18 @@ def dashboard():
 @app.route("/signals")
 def signals():
     return jsonify(state)
+
+@app.route("/status")
+def status():
+    return jsonify({
+        "status": state["status"],
+        "pairs_loaded": state["pairs_loaded"],
+        "scan_count": state["scan_count"],
+        "last_scan": state["last_scan"],
+        "last_error": state["last_error"],
+        "prev_symbols_count": len(state["prev_top_symbols"]),
+        "logs": state["logs"][-20:],
+    })
 
 def run_flask():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
