@@ -133,5 +133,167 @@ def main():
         log.info(f"Next in {INTERVAL_MIN} min")
         time.sleep(INTERVAL_MIN * 60)
 
+
+from flask import Flask, Response
+import threading as _threading
+
+_app = Flask(__name__)
+
+MOBILE_HTML = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>JARVIS ANALYST</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max-width:430px;margin:0 auto;padding-bottom:60px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fade{animation:fadeIn 0.4s ease}
+.header{position:sticky;top:0;z-index:10;background:#080b0f;border-bottom:1px solid #0d1117;padding:16px 16px 12px}
+.header-top{display:flex;justify-content:space-between;align-items:flex-start}
+.title{font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:#fff;letter-spacing:2px}
+.subtitle{font-size:9px;color:#30363d;letter-spacing:2px}
+.live-dot{width:7px;height:7px;border-radius:50%;background:#00e676;animation:pulse 1.5s infinite;display:inline-block;margin-right:6px}
+.live-txt{font-size:10px;color:#00e676;letter-spacing:1px}
+.timer{font-size:10px;color:#30363d;margin-top:2px;text-align:right}
+.stats{display:flex;gap:8px;margin-top:10px}
+.stat{flex:1;background:#0d1117;border:1px solid #161b22;border-radius:8px;padding:6px 8px;text-align:center}
+.stat-val{font-size:14px;font-weight:700;color:#fff}
+.stat-lbl{font-size:8px;color:#30363d;letter-spacing:1px}
+.messages{padding:12px 12px 0}
+.card{background:#0d1117;border:1px solid #00e67622;border-radius:14px;padding:14px 16px;margin-bottom:12px}
+.card-time{font-size:10px;color:#30363d;margin-bottom:10px;letter-spacing:1px}
+.card-line{font-size:12px;line-height:1.9}
+.empty{background:#0d1117;border:1px solid #161b22;border-radius:14px;padding:40px 20px;text-align:center;margin-top:20px}
+.empty-icon{font-size:24px;margin-bottom:12px}
+.empty-title{font-size:12px;color:#30363d;letter-spacing:2px;margin-bottom:6px}
+.empty-sub{font-size:11px;color:#21262d;line-height:1.6}
+.footer{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#080b0f;border-top:1px solid #0d1117;padding:10px 16px;text-align:center;font-size:9px;color:#21262d;letter-spacing:1px}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-top">
+    <div>
+      <div class="title">JARVIS</div>
+      <div class="subtitle">ANALYST · 300 PAIRS · OKX</div>
+    </div>
+    <div>
+      <div><span class="live-dot"></span><span class="live-txt" id="status">CONNECTING</span></div>
+      <div class="timer" id="timer"></div>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-val" id="sig-count">0</div><div class="stat-lbl">СИГНАЛОВ</div></div>
+    <div class="stat"><div class="stat-val">300</div><div class="stat-lbl">ПАРЫ</div></div>
+    <div class="stat"><div class="stat-val">15м</div><div class="stat-lbl">ИНТЕРВАЛ</div></div>
+  </div>
+</div>
+
+<div class="messages" id="messages">
+  <div class="empty">
+    <div class="empty-icon">⏳</div>
+    <div class="empty-title">ОЖИДАНИЕ</div>
+    <div class="empty-sub">Бот сканирует рынок каждые 15 минут<br>Сигналы появятся здесь автоматически</div>
+  </div>
+</div>
+
+<div class="footer">⚠️ НЕ ЯВЛЯЕТСЯ ФИНАНСОВЫМ СОВЕТОМ · ТОРГУЙ НА СВОЙ РИСК</div>
+
+<script>
+const BOT_TOKEN = "8548549782:AAGYu1rr0lF-MT2vQ2ybr1cbqWEtqDoSw5I";
+const CHAT_ID = "1974907918";
+let lastId = 0;
+let messages = [];
+let nextScan = null;
+let sigCount = 0;
+
+function getLineColor(line) {
+  if (line.includes('#1') || line.includes('#2') || line.includes('#3')) return '#00e676';
+  if (line.includes('Вход:')) return '#ffffff';
+  if (line.includes('SL:')) return '#ff5252';
+  if (line.includes('TP:')) return '#69f0ae';
+  if (line.includes('RR:') || line.includes('Score:')) return '#58a6ff';
+  if (line.includes('JARVIS')) return '#ffffff';
+  if (line.startsWith('─')) return '#1e3a4a';
+  if (line.includes('💬')) return '#78909c';
+  return '#78909c';
+}
+
+function formatMsg(text) {
+  return text
+    .replace(/<b>(.*?)<\/b>/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/━━━━━━━━━━━━━━━━/g, '─────────────');
+}
+
+function renderMessages() {
+  const container = document.getElementById('messages');
+  if (messages.length === 0) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">ОЖИДАНИЕ</div><div class="empty-sub">Бот сканирует рынок каждые 15 минут<br>Сигналы появятся здесь автоматически</div></div>';
+    return;
+  }
+  document.getElementById('sig-count').textContent = sigCount;
+  container.innerHTML = messages.map((msg, i) => {
+    const lines = formatMsg(msg.text).split('\n').filter(l => l.trim());
+    const d = new Date(msg.date * 1000);
+    const time = d.toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'}) + ' · ' + d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
+    const linesHtml = lines.map(l => `<div class="card-line" style="color:${getLineColor(l)}">${l}</div>`).join('');
+    return `<div class="card ${i===0?'fade':''}"><div class="card-time">${time}</div>${linesHtml}</div>`;
+  }).join('');
+}
+
+function updateTimer() {
+  if (!nextScan) return;
+  const diff = Math.max(0, Math.floor((nextScan - Date.now()) / 1000));
+  const m = Math.floor(diff / 60);
+  const s = diff % 60;
+  document.getElementById('timer').textContent = diff > 0 ? `след: ${m}:${String(s).padStart(2,'0')}` : '';
+}
+
+async function fetchMessages() {
+  try {
+    const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastId+1}&limit=20`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.ok && data.result.length > 0) {
+      const newMsgs = data.result.filter(u => u.message?.text).map(u => ({id: u.update_id, text: u.message.text, date: u.message.date}));
+      if (newMsgs.length > 0) {
+        messages = [...newMsgs.reverse(), ...messages].slice(0, 30);
+        sigCount = messages.filter(m => m.text.includes('JARVIS ANALYST')).length;
+        const lastSig = messages.find(m => m.text.includes('JARVIS ANALYST'));
+        if (lastSig) nextScan = new Date(lastSig.date * 1000 + 15 * 60 * 1000);
+        lastId = data.result[data.result.length-1].update_id;
+        renderMessages();
+      }
+      document.getElementById('status').textContent = 'LIVE';
+      document.querySelector('.live-dot').style.background = '#00e676';
+    }
+  } catch(e) {
+    document.getElementById('status').textContent = 'ERROR';
+    document.querySelector('.live-dot').style.background = '#ff1744';
+  }
+}
+
+fetchMessages();
+setInterval(fetchMessages, 10000);
+setInterval(updateTimer, 1000);
+</script>
+</body>
+</html>"""
+
+@_app.route("/")
+def dashboard():
+    return Response(MOBILE_HTML, mimetype="text/html")
+
+def _run_flask():
+    _app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
 if __name__ == "__main__":
+    _threading.Thread(target=_run_flask, daemon=True).start()
     main()
