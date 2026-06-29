@@ -7,8 +7,8 @@ ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT  = os.environ["TELEGRAM_CHAT_ID"]
 INTERVAL_MIN   = int(os.environ.get("INTERVAL_MIN", "15"))
-SESSION_START  = int(os.environ.get("SESSION_START_UTC", "7"))
-SESSION_END    = int(os.environ.get("SESSION_END_UTC", "21"))
+SESSION_START  = int(os.environ.get("SESSION_START_UTC", "11"))
+SESSION_END    = int(os.environ.get("SESSION_END_UTC", "17"))
 OKX_BASE = "https://www.okx.com"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler()])
@@ -245,10 +245,52 @@ def price_monitor():
             update_history_prices()
         except: pass
 
+def send_daily_top4(now):
+    if not state["accumulated"]: return
+    sorted_pairs = sorted(state["accumulated"].values(), key=lambda x: (x["count"], x["data"].get("score",0)), reverse=True)
+    top4 = [p["data"] for p in sorted_pairs[:4]]
+    scan_time = now.strftime("%H:%M UTC")
+    for p in top4:
+        e = p.get("entry", 0)
+        if e > 0:
+            p["stop_loss"] = round(e * 0.985, 8)
+            p["take_profit"] = round(e * 1.035, 8)
+    state["signals"] = [{"rank": i+1, **p, "scan_time": scan_time} for i, p in enumerate(top4)]
+    state["last_scan"] = scan_time
+    for p in top4:
+        state["history"].append({"symbol": p["symbol"], "scan_time": scan_time, "entry": p.get("entry",0), "stop_loss": p.get("stop_loss",0), "take_profit": p.get("take_profit",0), "score": p.get("score",0), "rsi": p.get("rsi",0), "macd": p.get("macd",""), "reason": p.get("reason",""), "current_price": p.get("entry",0), "pct_change": 0.0, "status": "active", "result": None})
+    counts = {p["data"]["symbol"]: p["count"] for p in sorted_pairs[:4]}
+    msgs = []
+    for i, p in enumerate(top4):
+        sym = p["symbol"].replace("-USDT","")
+        e = p.get("entry",0); sl = p.get("stop_loss",0); tp = p.get("take_profit",0)
+        rr = abs((tp-e)/(e-sl)) if abs(e-sl) > 0 else 0
+        cnt = counts.get(p["symbol"], 0)
+        line = "#" + str(i+1) + " " + sym + "/USDT x" + str(cnt) + " scanов"
+        line += "\nВход: " + str(e) + "  SL: " + str(sl) + "  TP: " + str(tp)
+        line += "\nRR: 1:" + str(round(rr,1)) + " Score: " + str(p.get("score",0))
+        line += "\n" + str(p.get("reason",""))
+        msgs.append("\U0001f7e2 " + line)
+    header = "\U0001f3af JARVIS TOP-4 | " + scan_time + "\n\U0001f4ca Лучшие пары 11:00-13:00 UTC\n" + "-"*16 + "\n"
+    tg(header + "\n\n".join(msgs) + "\n\n" + "-"*16 + "\n\u26a0\ufe0f Не финансовый совет.")
+    log.info("Sent daily top-4: " + str([p["symbol"] for p in top4]))
+
 def run_cycle():
     now = datetime.now(timezone.utc)
+    if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
+        state["history"] = []
+        state["accumulated"] = {}
+        state["daily_signal_sent"] = False
+        state["prev_top_symbols"] = []
+        log.info("Daily reset")
     if not (SESSION_START <= now.hour < SESSION_END):
-        log.info(f"Outside session")
+        log.info("Outside session " + str(now.hour) + " UTC")
+        return
+    if now.hour >= 13 and not state["daily_signal_sent"] and state["accumulated"]:
+        send_daily_top4(now)
+        state["daily_signal_sent"] = True
+        return
+    if state["daily_signal_sent"]:
         return
     # Reset history at start of day
     if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
@@ -263,26 +305,17 @@ def run_cycle():
             slog("No candidates found")
             return
 
-        # Double-scan confirmation: only pairs seen in previous scan too
-        current_symbols = [c["symbol"] for c in candidates[:10]]
-        if state["prev_top_symbols"]:
-            confirmed = [c for c in candidates if c["symbol"] in state["prev_top_symbols"]]
-            log.info(f"Double-confirmed pairs: {[c['symbol'] for c in confirmed]}")
-            if not confirmed:
-                log.info("No double-confirmed pairs this scan, waiting...")
-                state["prev_top_symbols"] = current_symbols
-                state["scan_count"] += 1
-                state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
-                return
-            candidates_to_analyze = confirmed[:25]
-        else:
-            log.info("First scan of session, storing symbols for next confirmation")
-            state["prev_top_symbols"] = current_symbols
-            state["scan_count"] += 1
-            state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
-            return
-
-        state["prev_top_symbols"] = current_symbols
+        # Accumulate pairs across scans
+        for c in candidates[:10]:
+            sym = c["symbol"]
+            if sym not in state["accumulated"]:
+                state["accumulated"][sym] = {"count": 0, "data": c}
+            state["accumulated"][sym]["count"] += 1
+            state["accumulated"][sym]["data"] = c
+        log.info("Accumulated " + str(len(state["accumulated"])) + " pairs, top: " + str([c["symbol"] for c in candidates[:3]]))
+        state["scan_count"] += 1
+        state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
+        return
 
         result = analyze_with_claude(candidates_to_analyze)
         pairs = result.get("top_pairs", [])
