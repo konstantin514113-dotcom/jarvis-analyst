@@ -346,15 +346,6 @@ def main():
 
 app = Flask(__name__)
 
-# Auto-start when loaded by gunicorn (not just direct python run)
-def _startup():
-    load_pairs()
-    threading.Thread(target=main, daemon=True).start()
-
-import atexit
-_startup_thread = threading.Thread(target=_startup, daemon=True)
-_startup_thread.start()
-
 DASHBOARD = """<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -502,6 +493,13 @@ def status():
 def run_flask():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
+# Auto-start for gunicorn
+def _startup():
+    load_pairs()
+    threading.Thread(target=main, daemon=True).start()
+
+_startup_thread = threading.Thread(target=_startup, daemon=True)
+_startup_thread.start()
+
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
-    main()
+    pass  # gunicorn handles startup
