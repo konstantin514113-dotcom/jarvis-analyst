@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>JARVIS</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max-width:430px;margin:0 auto;min-height:100vh;padding-bottom:20px}
+.header{padding:16px 16px 10px;display:flex;justify-content:space-between;align-items:center}
+.title{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:#fff;letter-spacing:3px}
+.live{display:flex;align-items:center;gap:6px;font-size:10px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+.timer{text-align:center;padding:6px;font-size:11px;color:#30363d;letter-spacing:1px}
+.timer span{color:#58a6ff}
+.cards{padding:8px 12px;display:flex;flex-direction:column;gap:10px}
+.card{background:#0d1117;border:1px solid #161b22;border-radius:16px;padding:16px;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.card.r1::before{background:linear-gradient(90deg,#00e676,#69f0ae)}
+.card.r2::before{background:linear-gradient(90deg,#58a6ff,#79c0ff)}
+.card.r3::before{background:linear-gradient(90deg,#ffea00,#ffd740)}
+.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.pair{font-size:18px;font-weight:700;color:#fff}
+.score{font-size:11px;padding:3px 8px;border-radius:20px;font-weight:700}
+.sc1{background:#00e67211;color:#00e676}
+.sc2{background:#58a6ff11;color:#58a6ff}
+.sc3{background:#ffea0011;color:#ffea00}
+.confirm{font-size:10px;color:#00e676;margin-bottom:12px}
+.prices{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
+.price-box{background:#080b0f;border-radius:10px;padding:10px;text-align:center}
+.price-label{font-size:8px;color:#455a64;letter-spacing:1px;margin-bottom:4px}
+.price-val{font-size:12px;font-weight:700}
+.pv-e{color:#fff}.pv-s{color:#ff5252}.pv-t{color:#00e676}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn-trade{background:linear-gradient(135deg,#00e676,#00c853);border:none;border-radius:10px;padding:13px;font-size:12px;font-weight:700;color:#000;font-family:'JetBrains Mono',monospace;cursor:pointer;letter-spacing:1px}
+.btn-skip{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:13px;font-size:12px;color:#546e7a;font-family:'JetBrains Mono',monospace;cursor:pointer}
+.day-result{margin:8px 12px 16px;background:#0d1117;border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
+.day-label{font-size:9px;color:#30363d;letter-spacing:2px}
+.day-val{font-size:16px;font-weight:700}
+.waiting{padding:80px 20px;text-align:center}
+.waiting-icon{font-size:36px;margin-bottom:14px}
+.waiting-text{font-size:11px;color:#30363d;letter-spacing:2px;margin-bottom:6px}
+.waiting-sub{font-size:10px;color:#21262d}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="title">JARVIS</div>
+  <div class="live"><div class="dot" id="dot" style="background:#ffea00"></div><span id="st" style="color:#ffea00;font-size:10px">LOADING</span></div>
+</div>
+<div class="timer">след. скан через <span id="tmr">—</span></div>
+<div class="cards" id="cards">
+  <div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует каждые 15 минут</div></div>
+</div>
+<div class="day-result">
+  <div class="day-label">ИТОГ ДНЯ</div>
+  <div class="day-val" id="day-val" style="color:#30363d">—</div>
+</div>
+<script>
+function trade(sym){window.open('https://www.okx.com/trade-swap/'+sym.toLowerCase().replace('-usdt','')+'-usdt-swap','_blank')}
+
+function renderCards(sigs){
+  if(!sigs||!sigs.length){
+    document.getElementById('cards').innerHTML='<div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует каждые 15 минут</div></div>';
+    return;
+  }
+  document.getElementById('cards').innerHTML = sigs.map((s,i)=>{
+    const sym=s.symbol.replace('-USDT','');
+    const rc=i===0?'r1':i===1?'r2':'r3';
+    const sc=i===0?'sc1':i===1?'sc2':'sc3';
+    return '<div class="card '+rc+'">'+
+      '<div class="card-head"><div class="pair">'+sym+'/USDT</div><div class="score '+sc+'">SCORE '+s.score+'</div></div>'+
+      '<div class="confirm">✅ 1H подтверждён · двойной скан</div>'+
+      '<div class="prices">'+
+        '<div class="price-box"><div class="price-label">ВХОД</div><div class="price-val pv-e">'+s.entry+'</div></div>'+
+        '<div class="price-box"><div class="price-label">СТОП</div><div class="price-val pv-s">'+s.stop_loss+'</div></div>'+
+        '<div class="price-box"><div class="price-label">ТЕЙК</div><div class="price-val pv-t">'+s.take_profit+'</div></div>'+
+      '</div>'+
+      '<div class="btns">'+
+        '<button class="btn-trade" onclick="trade(\''+s.symbol+'\')">▲ ТОРГОВАТЬ</button>'+
+        '<button class="btn-skip">ПРОПУСТИТЬ</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+function updateTimer(next){
+  if(!next){document.getElementById('tmr').textContent='—';return;}
+  const d=Math.max(0,Math.floor(next-Date.now()/1000));
+  document.getElementById('tmr').textContent=d>0?Math.floor(d/60)+':'+String(d%60).padStart(2,'0'):'сканирование...';
+}
+
+async function fetchData(){
+  try{
+    const r=await fetch('/signals');
+    const d=await r.json();
+    const sigs=d.signals||[];
+    const dot=document.getElementById('dot');
+    const st=document.getElementById('st');
+    if(sigs.length){dot.style.background='#00e676';st.style.color='#00e676';st.textContent='LIVE';}
+    else{dot.style.background='#ffea00';st.style.color='#ffea00';st.textContent='WAITING';}
+    renderCards(sigs);
+    updateTimer(d.next_scan);
+    const hist=d.history||[];
+    let total=0;
+    hist.forEach(h=>{if(h.pct_change)total+=h.pct_change;});
+    const dv=document.getElementById('day-val');
+    dv.textContent=(total>=0?'+':'')+total.toFixed(2)+'%';
+    dv.style.color=total>=0?'#00e676':'#ff1744';
+  }catch(e){document.getElementById('st').textContent='ERROR';}
+}
+
+fetchData();
+setInterval(fetchData,15000);
+setInterval(()=>{fetch('/signals').then(r=>r.json()).then(d=>updateTimer(d.next_scan)).catch(()=>{})},1000);
+</script>
+</body>
+</html>
