@@ -14,7 +14,13 @@ OKX_BASE = "https://www.okx.com"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler()])
 log = logging.getLogger("JARVIS")
 
-state = {"signals": [], "last_scan": None, "next_scan": None, "scan_count": 0}
+state = {
+    "signals": [],
+    "last_scan": None,
+    "next_scan": None,
+    "scan_count": 0,
+    "history": [],  # all signals today with current price updates
+}
 
 PAIRS = [
     "BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
@@ -45,24 +51,8 @@ PAIRS = [
 
 SCREEN_PROMPT = """You are an institutional crypto momentum analyst for OKX spot market.
 Analyze the provided pairs with full technical data and select TOP 3 most likely to rise in next 60 minutes.
-
-For each pair you receive:
-- price, change24h, volume
-- RSI14 (overbought >70, oversold <30)
-- MACD signal (bullish/bearish crossover)
-- MA trend (price vs MA20: above=bullish, below=bearish)
-- Candle pattern (last 3 candles: direction and size)
-- Distance from daily high (room to grow)
-- Funding rate (negative=shorts paying=bullish)
-
-Selection criteria:
-1. RSI between 45-65 (momentum but not overbought)
-2. MACD bullish or crossing up
-3. Price above MA20
-4. Volume spike on recent candles
-5. Not at daily high (room to grow >1%)
-6. Negative or low funding rate
-
+For each pair you receive: price, change24h, volume, RSI14, MACD signal, MA trend, candle pattern, distance from daily high, funding rate.
+Selection criteria: RSI 45-65, MACD bullish or crossing up, price above MA20, volume spike, not at daily high, low/negative funding.
 Reply ONLY valid JSON no markdown:
 {"top_pairs": [{"symbol": "XXX-USDT", "direction": "LONG", "entry": 0.0, "stop_loss": 0.0, "take_profit": 0.0, "score": 85, "rsi": 55, "macd": "bullish", "reason": "one sentence in Russian"}]}"""
 
@@ -87,17 +77,16 @@ def get_ticker(symbol):
                 "vol24h": round(vol,0), "high24h": float(t.get("high24h",last)), "low24h": float(t.get("low24h",last))}
     except: return None
 
-def get_candles(symbol, bar="15m", limit=20):
+def get_candles(symbol, bar="15m", limit=30):
     try:
         r = requests.get(f"{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}", timeout=5)
         data = r.json().get("data", [])
         if not data: return None
-        candles = [{"t": c[0], "o": float(c[1]), "h": float(c[2]), "l": float(c[3]), "c": float(c[4]), "v": float(c[5])} for c in reversed(data)]
-        return candles
+        return [{"t": c[0], "o": float(c[1]), "h": float(c[2]), "l": float(c[3]), "c": float(c[4]), "v": float(c[5])} for c in reversed(data)]
     except: return None
 
 def calc_rsi(candles, period=14):
-    if len(candles) < period + 1: return 50
+    if not candles or len(candles) < period + 1: return 50
     closes = [c["c"] for c in candles]
     gains, losses = [], []
     for i in range(1, len(closes)):
@@ -107,65 +96,43 @@ def calc_rsi(candles, period=14):
     avg_gain = sum(gains[-period:]) / period
     avg_loss = sum(losses[-period:]) / period
     if avg_loss == 0: return 100
-    rs = avg_gain / avg_loss
-    return round(100 - (100 / (1 + rs)), 1)
+    return round(100 - (100 / (1 + avg_gain/avg_loss)), 1)
 
 def calc_macd(candles):
-    if len(candles) < 26: return "unknown"
+    if not candles or len(candles) < 26: return "unknown"
     closes = [c["c"] for c in candles]
     def ema(data, n):
-        k = 2/(n+1)
-        e = data[0]
+        k = 2/(n+1); e = data[0]
         for d in data[1:]: e = d*k + e*(1-k)
         return e
-    ema12 = ema(closes[-12:], 12)
-    ema26 = ema(closes[-26:], 26)
-    macd = ema12 - ema26
-    prev_ema12 = ema(closes[-13:-1], 12)
-    prev_ema26 = ema(closes[-27:-1], 26)
-    prev_macd = prev_ema12 - prev_ema26
+    macd = ema(closes[-12:], 12) - ema(closes[-26:], 26)
+    prev_macd = ema(closes[-13:-1], 12) - ema(closes[-27:-1], 26)
     if macd > 0 and macd > prev_macd: return "bullish"
     if macd < 0 and macd < prev_macd: return "bearish"
     if macd > prev_macd: return "crossing_up"
     return "crossing_down"
 
 def calc_ma(candles, period=20):
-    if len(candles) < period: return None
-    closes = [c["c"] for c in candles[-period:]]
-    return sum(closes) / period
-
-def candle_pattern(candles):
-    if len(candles) < 3: return "unknown"
-    last3 = candles[-3:]
-    directions = ["green" if c["c"] > c["o"] else "red" for c in last3]
-    sizes = [abs(c["c"] - c["o"]) / c["o"] * 100 for c in last3]
-    pattern = f"{directions[-3]},{directions[-2]},{directions[-1]} sizes:{sizes[-1]:.1f}%"
-    return pattern
+    if not candles or len(candles) < period: return None
+    return sum(c["c"] for c in candles[-period:]) / period
 
 def get_funding(symbol):
     try:
-        inst = symbol.replace("-USDT", "-USDT-SWAP")
-        r = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate?instId={inst}", timeout=5)
+        r = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate?instId={symbol.replace('-USDT','-USDT-SWAP')}", timeout=5)
         d = r.json().get("data", [{}])[0]
         return round(float(d.get("fundingRate", 0)) * 100, 4)
     except: return 0.0
 
 def analyze_pair(symbol):
     t = get_ticker(symbol)
-    if not t: return None
-    if t["vol24h"] < 5000: return None
-
-    candles = get_candles(symbol, "15m", 30)
-    rsi = calc_rsi(candles) if candles else 50
-    macd = calc_macd(candles) if candles else "unknown"
-    ma20 = calc_ma(candles) if candles else None
-    pattern = candle_pattern(candles) if candles else "unknown"
+    if not t or t["vol24h"] < 5000: return None
+    candles = get_candles(symbol)
+    rsi = calc_rsi(candles)
+    macd = calc_macd(candles)
+    ma20 = calc_ma(candles)
     above_ma = t["price"] > ma20 if ma20 else False
     funding = get_funding(symbol)
-
     dist = (t["high24h"] - t["price"]) / t["high24h"] * 100 if t["high24h"] > 0 else 0
-
-    # Score
     score = 0
     score += min(t["change24h"] * 3, 30)
     score += min(t["vol24h"] / 50000, 20)
@@ -173,26 +140,32 @@ def analyze_pair(symbol):
     score += 15 if "bullish" in macd or "crossing_up" in macd else 0
     score += 10 if above_ma else 0
     score += 10 if dist > 1 else 0
+    return {**t, "rsi": rsi, "macd": macd, "above_ma20": above_ma,
+            "funding": funding, "dist_from_high": round(dist,2), "score": round(score,1)}
 
-    return {
-        "symbol": symbol,
-        "price": t["price"],
-        "change24h": t["change24h"],
-        "vol24h": t["vol24h"],
-        "high24h": t["high24h"],
-        "low24h": t["low24h"],
-        "rsi": rsi,
-        "macd": macd,
-        "above_ma20": above_ma,
-        "ma20": round(ma20, 8) if ma20 else None,
-        "candle_pattern": pattern,
-        "funding": funding,
-        "dist_from_high": round(dist, 2),
-        "score": round(score, 1),
-    }
+def update_history_prices():
+    """Update current prices for all history entries"""
+    for entry in state["history"]:
+        if entry.get("status") == "active":
+            try:
+                t = get_ticker(entry["symbol"])
+                if t:
+                    entry_price = entry["entry"]
+                    current = t["price"]
+                    pct = round((current - entry_price) / entry_price * 100, 2)
+                    entry["current_price"] = current
+                    entry["pct_change"] = pct
+                    # Check if hit TP or SL
+                    if current >= entry["take_profit"]:
+                        entry["status"] = "tp_hit"
+                        entry["result"] = "WIN"
+                    elif current <= entry["stop_loss"]:
+                        entry["status"] = "sl_hit"
+                        entry["result"] = "LOSS"
+            except: pass
 
 def scan():
-    log.info(f"Scanning {len(PAIRS)} pairs with technical analysis...")
+    log.info(f"Scanning {len(PAIRS)} pairs...")
     candidates = []
     for symbol in PAIRS:
         try:
@@ -200,8 +173,7 @@ def scan():
             if data and data["score"] > 10:
                 candidates.append(data)
             time.sleep(0.1)
-        except Exception as e:
-            pass
+        except: pass
     candidates.sort(key=lambda x: x["score"], reverse=True)
     log.info(f"Found {len(candidates)} candidates")
     return candidates[:25]
@@ -210,21 +182,28 @@ def analyze_with_claude(candidates):
     client = Anthropic(api_key=ANTHROPIC_KEY)
     lines = [f"Market data UTC {datetime.utcnow().strftime('%H:%M')}:\n"]
     for c in candidates:
-        lines.append(
-            f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} "
-            f"RSI={c['rsi']} MACD={c['macd']} above_MA20={'YES' if c['above_ma20'] else 'NO'} "
-            f"pattern={c['candle_pattern']} funding={c['funding']}% dist_high={c['dist_from_high']:.1f}% score={c['score']}"
-        )
+        lines.append(f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} RSI={c['rsi']} MACD={c['macd']} above_MA20={'YES' if c['above_ma20'] else 'NO'} funding={c['funding']}% dist_high={c['dist_from_high']:.1f}% score={c['score']}")
     msg = client.messages.create(model="claude-sonnet-4-6", max_tokens=1000,
         system=SCREEN_PROMPT, messages=[{"role": "user", "content": "\n".join(lines)}])
     text = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
     return json.loads(text)
 
+def price_monitor():
+    """Update history prices every 2 minutes"""
+    while True:
+        time.sleep(120)
+        try:
+            update_history_prices()
+        except: pass
+
 def run_cycle():
     now = datetime.now(timezone.utc)
     if not (SESSION_START <= now.hour < SESSION_END):
-        log.info(f"Outside session {SESSION_START}-{SESSION_END} UTC")
+        log.info(f"Outside session")
         return
+    # Reset history at start of day
+    if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
+        state["history"] = []
     log.info(f"=== Cycle {now.strftime('%H:%M UTC')} ===")
     try:
         candidates = scan()
@@ -239,37 +218,44 @@ def run_cycle():
         state["scan_count"] += 1
         state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
 
-        header = f"🤖 <b>JARVIS ANALYST</b> | {scan_time}\n━━━━━━━━━━━━━━━━\n"
+        # Add to history
+        for p in pairs[:3]:
+            state["history"].append({
+                "symbol": p["symbol"],
+                "scan_time": scan_time,
+                "entry": p.get("entry", 0),
+                "stop_loss": p.get("stop_loss", 0),
+                "take_profit": p.get("take_profit", 0),
+                "score": p.get("score", 0),
+                "rsi": p.get("rsi", 0),
+                "macd": p.get("macd", ""),
+                "reason": p.get("reason", ""),
+                "current_price": p.get("entry", 0),
+                "pct_change": 0.0,
+                "status": "active",
+                "result": None,
+            })
+
+        # Send to Telegram
+        header = f"🤖 <b>JARVIS ANALYST v2</b> | {scan_time}\n━━━━━━━━━━━━━━━━\n"
         signals = []
         for i, p in enumerate(pairs[:3]):
             sym = p["symbol"].replace("-USDT","")
-            entry = p.get("entry", 0)
-            sl = p.get("stop_loss", 0)
-            tp = p.get("take_profit", 0)
+            entry = p.get("entry",0); sl = p.get("stop_loss",0); tp = p.get("take_profit",0)
             rr = abs((tp-entry)/(entry-sl)) if abs(entry-sl) > 0 else 0
-            rsi = p.get("rsi", "—")
-            macd = p.get("macd", "—")
-            signals.append(
-                f"🟢 <b>#{i+1} {sym}/USDT</b>\n"
-                f"💰 Вход: <b>{entry}</b>\n"
-                f"🛑 SL: {sl}\n"
-                f"🎯 TP: {tp}\n"
-                f"📊 RR: 1:{rr:.1f} | Score: {p.get('score',0)}\n"
-                f"📈 RSI: {rsi} | MACD: {macd}\n"
-                f"💬 {p.get('reason','')}"
-            )
+            signals.append(f"🟢 <b>#{i+1} {sym}/USDT</b>\n💰 Вход: <b>{entry}</b>\n🛑 SL: {sl}\n🎯 TP: {tp}\n📊 RR: 1:{rr:.1f} | Score: {p.get('score',0)}\n📈 RSI: {p.get('rsi','—')} | MACD: {p.get('macd','—')}\n💬 {p.get('reason','')}")
         tg(header + "\n\n".join(signals) + "\n\n━━━━━━━━━━━━━━━━\n⚠️ Не финансовый совет.")
         log.info(f"Sent {len(pairs)} signals")
     except Exception as e:
         log.error(f"Error: {e}", exc_info=True)
 
 def main():
-    log.info(f"JARVIS ANALYST v2 | interval={INTERVAL_MIN}min | RSI+MACD+Candles enabled")
-    tg(f"🚀 <b>JARVIS ANALYST v2 запущен!</b>\n📊 RSI + MACD + Свечи + Funding Rate\n⏱ Каждые {INTERVAL_MIN} мин")
+    log.info(f"JARVIS ANALYST v2 | interval={INTERVAL_MIN}min")
+    tg(f"🚀 <b>JARVIS ANALYST v2</b>\n📊 RSI + MACD + История сигналов\n⏱ Каждые {INTERVAL_MIN} мин")
     time.sleep(30)
+    threading.Thread(target=price_monitor, daemon=True).start()
     while True:
         run_cycle()
-        log.info(f"Next in {INTERVAL_MIN} min")
         time.sleep(INTERVAL_MIN * 60)
 
 app = Flask(__name__)
@@ -284,34 +270,51 @@ DASHBOARD = """<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max-width:430px;margin:0 auto;padding-bottom:60px}
+body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max-width:430px;margin:0 auto;padding-bottom:70px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .fade{animation:fadeIn 0.4s ease}
-.header{position:sticky;top:0;z-index:10;background:#080b0f;border-bottom:1px solid #0d1117;padding:16px 16px 12px}
+.header{position:sticky;top:0;z-index:10;background:#080b0f;border-bottom:1px solid #0d1117;padding:14px 14px 10px}
 .row{display:flex;justify-content:space-between;align-items:flex-start}
 .title{font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:#fff;letter-spacing:2px}
 .sub{font-size:9px;color:#30363d;letter-spacing:2px}
 .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;animation:pulse 1.5s infinite}
-.stats{display:flex;gap:8px;margin-top:10px}
+.stats{display:flex;gap:6px;margin-top:10px}
 .stat{flex:1;background:#0d1117;border:1px solid #161b22;border-radius:8px;padding:6px 8px;text-align:center}
-.stat-v{font-size:14px;font-weight:700;color:#fff}
+.stat-v{font-size:13px;font-weight:700;color:#fff}
 .stat-l{font-size:8px;color:#30363d;letter-spacing:1px}
+.tabs{display:flex;border-bottom:1px solid #161b22;margin:0 14px}
+.tab{flex:1;text-align:center;padding:10px 0;font-size:10px;letter-spacing:1px;color:#30363d;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s}
+.tab.active{color:#00e676;border-bottom-color:#00e676}
 .body{padding:12px}
 .card{background:#0d1117;border:1px solid #00e67622;border-radius:14px;padding:14px 16px;margin-bottom:12px}
 .card-time{font-size:10px;color:#30363d;margin-bottom:10px}
-.sig{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #161b22}
+.sig{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #161b22}
 .sig:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
-.sig-title{font-size:14px;font-weight:700;color:#00e676;margin-bottom:8px}
-.sig-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+.sig-title{font-size:13px;font-weight:700;color:#00e676;margin-bottom:6px}
+.sig-row{display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px}
 .sig-label{color:#455a64}
-.sig-reason{font-size:11px;color:#546e7a;margin-top:8px;line-height:1.5;padding-top:8px;border-top:1px solid #161b22}
-.badge{font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;letter-spacing:1px}
-.badge-bull{background:#00e67622;color:#00e676}
+.sig-reason{font-size:10px;color:#546e7a;margin-top:6px;line-height:1.5;padding-top:6px;border-top:1px solid #161b22}
+.badge{font-size:9px;padding:2px 5px;border-radius:4px;font-weight:700}
+.badge-bull{background:#00e67222;color:#00e672}
 .badge-bear{background:#ff174422;color:#ff1744}
 .badge-neu{background:#58a6ff22;color:#58a6ff}
-.empty{background:#0d1117;border:1px solid #161b22;border-radius:14px;padding:40px 20px;text-align:center}
-.footer{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#080b0f;border-top:1px solid #0d1117;padding:10px;text-align:center;font-size:9px;color:#21262d}
+.hist-item{background:#0d1117;border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #161b22}
+.hist-item.win{border-left-color:#00e676}
+.hist-item.loss{border-left-color:#ff1744}
+.hist-item.active{border-left-color:#ffea00}
+.hist-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.hist-sym{font-size:12px;font-weight:700;color:#eceff1}
+.hist-time{font-size:9px;color:#30363d}
+.hist-bars{margin-top:6px}
+.bar-row{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.bar-label{font-size:9px;color:#455a64;width:28px}
+.bar-track{flex:1;height:4px;background:#161b22;border-radius:2px;overflow:hidden}
+.bar-fill{height:100%;border-radius:2px;transition:width 0.3s}
+.bar-val{font-size:9px;width:45px;text-align:right}
+.pct-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px}
+.empty{background:#0d1117;border:1px solid #161b22;border-radius:14px;padding:30px 20px;text-align:center}
+.footer{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#080b0f;border-top:1px solid #0d1117;padding:8px;text-align:center;font-size:9px;color:#21262d}
 </style>
 </head>
 <body>
@@ -325,71 +328,141 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
   </div>
   <div class="stats">
     <div class="stat"><div class="stat-v" id="sc">0</div><div class="stat-l">СКАНОВ</div></div>
-    <div class="stat"><div class="stat-v">300</div><div class="stat-l">ПАРЫ</div></div>
-    <div class="stat"><div class="stat-v">15м</div><div class="stat-l">ИНТЕРВАЛ</div></div>
+    <div class="stat"><div class="stat-v" id="hc">0</div><div class="stat-l">СИГНАЛОВ</div></div>
+    <div class="stat"><div class="stat-v" id="wc" style="color:#00e676">0</div><div class="stat-l">ПОБЕД</div></div>
+    <div class="stat"><div class="stat-v" id="lc" style="color:#ff1744">0</div><div class="stat-l">ПОТЕРЬ</div></div>
   </div>
 </div>
-<div class="body" id="body">
-  <div class="empty"><div style="font-size:24px;margin-bottom:12px">⏳</div><div style="font-size:12px;color:#30363d;letter-spacing:2px">ЗАГРУЗКА</div></div>
+<div class="tabs">
+  <div class="tab active" id="tab-signals" onclick="switchTab('signals')">СИГНАЛЫ</div>
+  <div class="tab" id="tab-history" onclick="switchTab('history')">ИСТОРИЯ ДНЯ</div>
+</div>
+<div class="body" id="body-signals">
+  <div class="empty"><div style="font-size:24px;margin-bottom:10px">⏳</div><div style="font-size:11px;color:#30363d">ЗАГРУЗКА...</div></div>
+</div>
+<div class="body" id="body-history" style="display:none">
+  <div class="empty"><div style="font-size:24px;margin-bottom:10px">📋</div><div style="font-size:11px;color:#30363d">ИСТОРИЯ ПОЯВИТСЯ ПОСЛЕ ПЕРВОГО СИГНАЛА</div></div>
 </div>
 <div class="footer">⚠️ НЕ ЯВЛЯЕТСЯ ФИНАНСОВЫМ СОВЕТОМ · ТОРГУЙ НА СВОЙ РИСК</div>
 <script>
-let prev = null;
+let currentTab = 'signals';
+let prevSig = null;
+let data = {};
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tab-signals').className = 'tab' + (tab==='signals'?' active':'');
+  document.getElementById('tab-history').className = 'tab' + (tab==='history'?' active':'');
+  document.getElementById('body-signals').style.display = tab==='signals' ? 'block' : 'none';
+  document.getElementById('body-history').style.display = tab==='history' ? 'block' : 'none';
+}
+
 function macdBadge(m) {
   if (!m) return '';
   if (m.includes('bullish')) return '<span class="badge badge-bull">BULL</span>';
   if (m.includes('bearish')) return '<span class="badge badge-bear">BEAR</span>';
-  if (m.includes('crossing_up')) return '<span class="badge badge-bull">↑ CROSS</span>';
-  if (m.includes('crossing_down')) return '<span class="badge badge-bear">↓ CROSS</span>';
-  return '<span class="badge badge-neu">'+m+'</span>';
+  if (m.includes('crossing_up')) return '<span class="badge badge-bull">↑</span>';
+  return '<span class="badge badge-neu">↓</span>';
 }
+
 function rsiColor(r) {
   if (r >= 70) return '#ff5252';
   if (r <= 30) return '#69f0ae';
   if (r >= 45 && r <= 65) return '#00e676';
   return '#58a6ff';
 }
-function render(data) {
-  const sigs = data.signals || [];
-  document.getElementById('sc').textContent = data.scan_count || 0;
-  const dot = document.getElementById('dot');
-  const st = document.getElementById('st');
-  if (sigs.length > 0) { dot.style.background='#00e676'; st.style.color='#00e676'; st.textContent='LIVE'; }
-  else { dot.style.background='#ffea00'; st.style.color='#ffea00'; st.textContent='WAITING'; }
+
+function renderSignals(d) {
+  const sigs = d.signals || [];
   if (!sigs.length) {
-    document.getElementById('body').innerHTML='<div class="empty"><div style="font-size:24px;margin-bottom:12px">⏳</div><div style="font-size:12px;color:#30363d;letter-spacing:2px">ОЖИДАНИЕ СИГНАЛА</div><div style="font-size:11px;color:#21262d;margin-top:6px;line-height:1.6">Бот сканирует рынок каждые 15 минут</div></div>';
+    document.getElementById('body-signals').innerHTML='<div class="empty"><div style="font-size:24px;margin-bottom:10px">⏳</div><div style="font-size:11px;color:#30363d;letter-spacing:1px">ОЖИДАНИЕ СИГНАЛА</div><div style="font-size:10px;color:#21262d;margin-top:6px">Бот сканирует каждые 15 минут</div></div>';
     return;
   }
-  const changed = JSON.stringify(sigs) !== prev;
-  prev = JSON.stringify(sigs);
-  document.getElementById('body').innerHTML = '<div class="card '+(changed?'fade':'')+'"><div class="card-time">🤖 JARVIS ANALYST v2 · '+(data.last_scan||'')+'</div>'+
+  const changed = JSON.stringify(sigs) !== prevSig;
+  prevSig = JSON.stringify(sigs);
+  document.getElementById('body-signals').innerHTML = '<div class="card '+(changed?'fade':'')+'"><div class="card-time">🤖 JARVIS ANALYST v2 · '+(d.last_scan||'')+'</div>'+
   sigs.map(s => {
     const sym = s.symbol.replace('-USDT','');
-    const entry = s.entry||0, sl = s.stop_loss||0, tp = s.take_profit||0;
-    const rr = Math.abs(sl&&entry ? (tp-entry)/(entry-sl) : 0);
+    const e=s.entry||0,sl=s.stop_loss||0,tp=s.take_profit||0;
+    const rr=Math.abs(sl&&e?(tp-e)/(e-sl):0);
     return '<div class="sig"><div class="sig-title">🟢 #'+s.rank+' '+sym+'/USDT · Score '+s.score+'</div>'+
-    '<div class="sig-row"><span class="sig-label">💰 Вход</span><span style="font-weight:700;color:#fff">'+entry+'</span></div>'+
-    '<div class="sig-row"><span class="sig-label">🛑 SL</span><span style="font-weight:700;color:#ff5252">'+sl+'</span></div>'+
-    '<div class="sig-row"><span class="sig-label">🎯 TP</span><span style="font-weight:700;color:#69f0ae">'+tp+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">💰 Вход</span><span style="font-weight:700;color:#fff">'+e+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">🛑 SL</span><span style="color:#ff5252;font-weight:700">'+sl+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">🎯 TP</span><span style="color:#69f0ae;font-weight:700">'+tp+'</span></div>'+
     '<div class="sig-row"><span class="sig-label">📊 RR</span><span style="color:#58a6ff">1:'+rr.toFixed(1)+'</span></div>'+
     '<div class="sig-row"><span class="sig-label">📈 RSI</span><span style="color:'+rsiColor(s.rsi||50)+'">'+( s.rsi||'—')+'</span></div>'+
     '<div class="sig-row"><span class="sig-label">📉 MACD</span>'+macdBadge(s.macd)+'</div>'+
     '<div class="sig-reason">💬 '+(s.reason||'')+'</div></div>';
   }).join('')+'</div>';
 }
+
+function renderHistory(d) {
+  const hist = (d.history || []).slice().reverse();
+  if (!hist.length) {
+    document.getElementById('body-history').innerHTML='<div class="empty"><div style="font-size:24px;margin-bottom:10px">📋</div><div style="font-size:11px;color:#30363d">ИСТОРИЯ ПОЯВИТСЯ ПОСЛЕ ПЕРВОГО СИГНАЛА</div></div>';
+    return;
+  }
+  let wins=0,losses=0;
+  hist.forEach(h=>{ if(h.result==='WIN') wins++; if(h.result==='LOSS') losses++; });
+  document.getElementById('wc').textContent=wins;
+  document.getElementById('lc').textContent=losses;
+  document.getElementById('hc').textContent=hist.length;
+
+  document.getElementById('body-history').innerHTML = hist.map(h => {
+    const sym = h.symbol.replace('-USDT','');
+    const pct = h.pct_change || 0;
+    const status = h.status;
+    const cls = status==='tp_hit'?'win':status==='sl_hit'?'loss':'active';
+    const pctColor = pct > 0 ? '#00e676' : pct < 0 ? '#ff1744' : '#58a6ff';
+    const statusLabel = status==='tp_hit'?'✅ TP HIT':status==='sl_hit'?'❌ SL HIT':'🔵 ACTIVE';
+
+    // Progress bars for entry, current, sl, tp
+    const range = h.take_profit - h.stop_loss;
+    const slPct = range > 0 ? 0 : 0;
+    const tpPct = 100;
+    const entryPct = range > 0 ? ((h.entry - h.stop_loss) / range * 100) : 50;
+    const currPct = range > 0 ? Math.max(0,Math.min(100,(h.current_price - h.stop_loss) / range * 100)) : 50;
+
+    return '<div class="hist-item '+cls+'">'+
+      '<div class="hist-header">'+
+        '<span class="hist-sym">'+sym+'/USDT</span>'+
+        '<span class="hist-time">'+h.scan_time+'</span>'+
+      '</div>'+
+      '<div class="sig-row">'+
+        '<span style="font-size:10px;color:#455a64">'+statusLabel+'</span>'+
+        '<span class="pct-badge" style="background:'+pctColor+'22;color:'+pctColor+'">'+(pct>=0?'+':'')+pct.toFixed(2)+'%</span>'+
+      '</div>'+
+      '<div class="hist-bars">'+
+        '<div class="bar-row"><span class="bar-label" style="color:#455a64">SL</span><div class="bar-track"><div class="bar-fill" style="width:0%;background:#ff1744"></div></div><span class="bar-val" style="color:#ff5252;font-size:9px">'+h.stop_loss+'</span></div>'+
+        '<div class="bar-row"><span class="bar-label" style="color:#ffea00">NOW</span><div class="bar-track"><div class="bar-fill" style="width:'+currPct.toFixed(0)+'%;background:'+(pct>=0?'#00e676':'#ff1744')+'"></div></div><span class="bar-val" style="color:#fff;font-size:9px">'+h.current_price+'</span></div>'+
+        '<div class="bar-row"><span class="bar-label" style="color:#69f0ae">TP</span><div class="bar-track"><div class="bar-fill" style="width:100%;background:#00e67633"></div></div><span class="bar-val" style="color:#69f0ae;font-size:9px">'+h.take_profit+'</span></div>'+
+      '</div>'+
+      '<div style="font-size:9px;color:#30363d;margin-top:4px">Вход: '+h.entry+' · RSI: '+h.rsi+'</div>'+
+    '</div>';
+  }).join('');
+}
+
 function updateTimer(n) {
   if (!n) return;
   const d = Math.max(0, Math.floor(n - Date.now()/1000));
-  document.getElementById('tmr').textContent = d>0 ? 'след: '+Math.floor(d/60)+':'+String(d%60).padStart(2,'0') : '';
+  document.getElementById('tmr').textContent = d>0 ? 'след: '+Math.floor(d/60)+':'+String(d%60).padStart(2,'0') : 'сканирование...';
 }
+
 async function fetchData() {
   try {
     const res = await fetch('/signals');
-    const data = await res.json();
-    render(data);
+    data = await res.json();
+    document.getElementById('sc').textContent = data.scan_count || 0;
+    const dot = document.getElementById('dot');
+    const st = document.getElementById('st');
+    if ((data.signals||[]).length > 0) { dot.style.background='#00e676'; st.style.color='#00e676'; st.textContent='LIVE'; }
+    else { dot.style.background='#ffea00'; st.style.color='#ffea00'; st.textContent='WAITING'; }
+    renderSignals(data);
+    renderHistory(data);
     setInterval(()=>updateTimer(data.next_scan), 1000);
   } catch(e) { document.getElementById('st').textContent='ERROR'; }
 }
+
 fetchData();
 setInterval(fetchData, 15000);
 </script>
