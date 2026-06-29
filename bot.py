@@ -7,8 +7,8 @@ ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT  = os.environ["TELEGRAM_CHAT_ID"]
 INTERVAL_MIN   = int(os.environ.get("INTERVAL_MIN", "15"))
-SESSION_START  = int(os.environ.get("SESSION_START_UTC", "11"))
-SESSION_END    = int(os.environ.get("SESSION_END_UTC", "17"))
+SESSION_START  = int(os.environ.get("SESSION_START_UTC", "7"))
+SESSION_END    = int(os.environ.get("SESSION_END_UTC", "21"))
 OKX_BASE = "https://www.okx.com"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler()])
@@ -248,7 +248,7 @@ def price_monitor():
 def send_daily_top4(now):
     if not state["accumulated"]: return
     sorted_pairs = sorted(state["accumulated"].values(), key=lambda x: (x["count"], x["data"].get("score",0)), reverse=True)
-    top4 = [p["data"] for p in sorted_pairs[:4]]
+    top4 = [p["data"] for p in sorted_pairs[:5]]
     scan_time = now.strftime("%H:%M UTC")
     for p in top4:
         e = p.get("entry", 0)
@@ -259,7 +259,7 @@ def send_daily_top4(now):
     state["last_scan"] = scan_time
     for p in top4:
         state["history"].append({"symbol": p["symbol"], "scan_time": scan_time, "entry": p.get("entry",0), "stop_loss": p.get("stop_loss",0), "take_profit": p.get("take_profit",0), "score": p.get("score",0), "rsi": p.get("rsi",0), "macd": p.get("macd",""), "reason": p.get("reason",""), "current_price": p.get("entry",0), "pct_change": 0.0, "status": "active", "result": None})
-    counts = {p["data"]["symbol"]: p["count"] for p in sorted_pairs[:4]}
+    counts = {p["data"]["symbol"]: p["count"] for p in sorted_pairs[:5]}
     msgs = []
     for i, p in enumerate(top4):
         sym = p["symbol"].replace("-USDT","")
