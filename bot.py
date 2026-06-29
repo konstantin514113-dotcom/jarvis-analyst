@@ -51,8 +51,9 @@ PAIRS = [
 
 SCREEN_PROMPT = """You are an institutional crypto momentum analyst for OKX spot market.
 Analyze the provided pairs with full technical data and select TOP 3 most likely to rise in next 60 minutes.
-For each pair you receive: price, change24h, volume, RSI14, MACD signal, MA trend, candle pattern, distance from daily high, funding rate.
-Selection criteria: RSI 45-65, MACD bullish or crossing up, price above MA20, volume spike, not at daily high, low/negative funding.
+For each pair you receive: price, change24h, volume, RSI14 (15m), RSI14 (1H), MACD (15m), MACD (1H), 1H_confirmed, MA trend, candle pattern, distance from daily high, funding rate.
+Selection criteria: prioritize pairs where BOTH 15m AND 1H are bullish (htf_confirmed=YES). RSI 45-65 on 15m, MACD bullish or crossing up on both timeframes, price above MA20, volume spike, not at daily high, low/negative funding.
+REJECT pairs where htf_confirmed=NO unless all other signals are extremely strong.
 Reply ONLY valid JSON no markdown:
 {"top_pairs": [{"symbol": "XXX-USDT", "direction": "LONG", "entry": 0.0, "stop_loss": 0.0, "take_profit": 0.0, "score": 85, "rsi": 55, "macd": "bullish", "reason": "one sentence in Russian"}]}"""
 
@@ -126,21 +127,34 @@ def get_funding(symbol):
 def analyze_pair(symbol):
     t = get_ticker(symbol)
     if not t or t["vol24h"] < 5000: return None
-    candles = get_candles(symbol)
-    rsi = calc_rsi(candles)
-    macd = calc_macd(candles)
-    ma20 = calc_ma(candles)
+
+    # 15m timeframe
+    candles_15m = get_candles(symbol, bar="15m", limit=30)
+    rsi_15m = calc_rsi(candles_15m)
+    macd_15m = calc_macd(candles_15m)
+    ma20 = calc_ma(candles_15m)
     above_ma = t["price"] > ma20 if ma20 else False
+
+    # 1H timeframe confirmation
+    candles_1h = get_candles(symbol, bar="1H", limit=30)
+    rsi_1h = calc_rsi(candles_1h)
+    macd_1h = calc_macd(candles_1h)
+    htf_bullish = (40 <= rsi_1h <= 70) and ("bullish" in macd_1h or "crossing_up" in macd_1h)
+
     funding = get_funding(symbol)
     dist = (t["high24h"] - t["price"]) / t["high24h"] * 100 if t["high24h"] > 0 else 0
+
     score = 0
     score += min(t["change24h"] * 3, 30)
     score += min(t["vol24h"] / 50000, 20)
-    score += 15 if 45 <= rsi <= 65 else (5 if 35 <= rsi < 45 else 0)
-    score += 15 if "bullish" in macd or "crossing_up" in macd else 0
+    score += 15 if 45 <= rsi_15m <= 65 else (5 if 35 <= rsi_15m < 45 else 0)
+    score += 15 if "bullish" in macd_15m or "crossing_up" in macd_15m else 0
     score += 10 if above_ma else 0
     score += 10 if dist > 1 else 0
-    return {**t, "rsi": rsi, "macd": macd, "above_ma20": above_ma,
+    score += 20 if htf_bullish else -10  # 1H confirmation bonus/penalty
+
+    return {**t, "rsi": rsi_15m, "rsi_1h": rsi_1h, "macd": macd_15m, "macd_1h": macd_1h,
+            "htf_bullish": htf_bullish, "above_ma20": above_ma,
             "funding": funding, "dist_from_high": round(dist,2), "score": round(score,1)}
 
 def update_history_prices():
@@ -182,7 +196,7 @@ def analyze_with_claude(candidates):
     client = Anthropic(api_key=ANTHROPIC_KEY)
     lines = [f"Market data UTC {datetime.utcnow().strftime('%H:%M')}:\n"]
     for c in candidates:
-        lines.append(f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} RSI={c['rsi']} MACD={c['macd']} above_MA20={'YES' if c['above_ma20'] else 'NO'} funding={c['funding']}% dist_high={c['dist_from_high']:.1f}% score={c['score']}")
+        lines.append(f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} RSI15m={c['rsi']} RSI1H={c['rsi_1h']} MACD15m={c['macd']} MACD1H={c['macd_1h']} htf_confirmed={'YES' if c['htf_bullish'] else 'NO'} above_MA20={'YES' if c['above_ma20'] else 'NO'} funding={c['funding']}% dist_high={c['dist_from_high']:.1f}% score={c['score']}")
     msg = client.messages.create(model="claude-sonnet-4-6", max_tokens=1000,
         system=SCREEN_PROMPT, messages=[{"role": "user", "content": "\n".join(lines)}])
     text = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
@@ -243,7 +257,8 @@ def run_cycle():
             sym = p["symbol"].replace("-USDT","")
             entry = p.get("entry",0); sl = p.get("stop_loss",0); tp = p.get("take_profit",0)
             rr = abs((tp-entry)/(entry-sl)) if abs(entry-sl) > 0 else 0
-            signals.append(f"🟢 <b>#{i+1} {sym}/USDT</b>\n💰 Вход: <b>{entry}</b>\n🛑 SL: {sl}\n🎯 TP: {tp}\n📊 RR: 1:{rr:.1f} | Score: {p.get('score',0)}\n📈 RSI: {p.get('rsi','—')} | MACD: {p.get('macd','—')}\n💬 {p.get('reason','')}")
+            htf = "✅ 1H подтверждён" if p.get("htf_bullish") else "⚠️ 1H не подтверждён"
+            signals.append(f"🟢 <b>#{i+1} {sym}/USDT</b>\n💰 Вход: <b>{entry}</b>\n🛑 SL: {sl}\n🎯 TP: {tp}\n📊 RR: 1:{rr:.1f} | Score: {p.get('score',0)}\n📈 RSI 15m: {p.get('rsi','—')} | 1H: {p.get('rsi_1h','—')}\n📉 MACD: {p.get('macd','—')} | {htf}\n💬 {p.get('reason','')}")
         tg(header + "\n\n".join(signals) + "\n\n━━━━━━━━━━━━━━━━\n⚠️ Не финансовый совет.")
         log.info(f"Sent {len(pairs)} signals")
     except Exception as e:
@@ -390,8 +405,10 @@ function renderSignals(d) {
     '<div class="sig-row"><span class="sig-label">🛑 SL</span><span style="color:#ff5252;font-weight:700">'+sl+'</span></div>'+
     '<div class="sig-row"><span class="sig-label">🎯 TP</span><span style="color:#69f0ae;font-weight:700">'+tp+'</span></div>'+
     '<div class="sig-row"><span class="sig-label">📊 RR</span><span style="color:#58a6ff">1:'+rr.toFixed(1)+'</span></div>'+
-    '<div class="sig-row"><span class="sig-label">📈 RSI</span><span style="color:'+rsiColor(s.rsi||50)+'">'+( s.rsi||'—')+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📈 RSI 15m</span><span style="color:'+rsiColor(s.rsi||50)+'">'+( s.rsi||'—')+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📊 RSI 1H</span><span style="color:'+rsiColor(s.rsi_1h||50)+'">'+(s.rsi_1h||'—')+'</span></div>'+
     '<div class="sig-row"><span class="sig-label">📉 MACD</span>'+macdBadge(s.macd)+'</div>'+
+    '<div class="sig-row"><span class="sig-label">🕐 1H</span><span style="color:'+(s.htf_bullish?'#00e676':'#ff5252')+'">'+(s.htf_bullish?'✅ ПОДТВЕРЖДЁН':'⚠️ НЕТ')+'</span></div>'+
     '<div class="sig-reason">💬 '+(s.reason||'')+'</div></div>';
   }).join('')+'</div>';
 }
