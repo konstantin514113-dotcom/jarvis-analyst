@@ -303,8 +303,16 @@ def run_cycle():
         state["scan_count"] += 1
         state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
 
+        # Filter out pairs already signaled today
+        today_symbols = {h["symbol"] for h in state["history"]}
+        new_pairs = [p for p in pairs[:3] if p["symbol"] not in today_symbols]
+        if not new_pairs:
+            log.info("All top pairs already signaled today, skipping")
+            return
+
         # Add to history
-        for p in pairs[:3]:
+        for p in new_pairs:
+            state["signals"] = [{"rank": i+1, **p2, "scan_time": scan_time} for i, p2 in enumerate(new_pairs)]
             state["history"].append({
                 "symbol": p["symbol"],
                 "scan_time": scan_time,
