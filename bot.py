@@ -19,7 +19,8 @@ state = {
     "last_scan": None,
     "next_scan": None,
     "scan_count": 0,
-    "history": [],  # all signals today with current price updates
+    "history": [],
+    "prev_top_symbols": [],  # symbols from previous scan for double confirmation
 }
 
 PAIRS = [
@@ -52,10 +53,14 @@ PAIRS = [
 SCREEN_PROMPT = """You are an institutional crypto momentum analyst for OKX spot market.
 Analyze the provided pairs with full technical data and select TOP 3 most likely to rise in next 60 minutes.
 For each pair you receive: price, change24h, volume, RSI14 (15m), RSI14 (1H), MACD (15m), MACD (1H), 1H_confirmed, MA trend, candle pattern, distance from daily high, funding rate.
-Selection criteria: prioritize pairs where BOTH 15m AND 1H are bullish (htf_confirmed=YES). RSI 45-65 on 15m, MACD bullish or crossing up on both timeframes, price above MA20, volume spike, not at daily high, low/negative funding.
-REJECT pairs where htf_confirmed=NO unless all other signals are extremely strong.
+Selection criteria: ONLY select pairs where htf_confirmed=YES (both 15m AND 1H bullish). RSI 45-65 on 15m, MACD bullish or crossing up on both timeframes, price above MA20, volume spike, not at daily high.
+STRICT RULES:
+- NEVER select pairs where htf_confirmed=NO
+- SL must be exactly entry * 0.985 (1.5% below entry)
+- TP must be exactly entry * 1.035 (3.5% above entry)
+- If fewer than 3 pairs pass all filters, return only those that pass. Return empty list if none qualify.
 Reply ONLY valid JSON no markdown:
-{"top_pairs": [{"symbol": "XXX-USDT", "direction": "LONG", "entry": 0.0, "stop_loss": 0.0, "take_profit": 0.0, "score": 85, "rsi": 55, "macd": "bullish", "reason": "one sentence in Russian"}]}"""
+{"top_pairs": [{"symbol": "XXX-USDT", "direction": "LONG", "entry": 0.0, "stop_loss": 0.0, "take_profit": 0.0, "score": 85, "rsi": 55, "rsi_1h": 52, "macd": "bullish", "htf_bullish": true, "reason": "one sentence in Russian"}]}"""
 
 def tg(msg):
     try:
@@ -184,12 +189,12 @@ def scan():
     for symbol in PAIRS:
         try:
             data = analyze_pair(symbol)
-            if data and data["score"] > 10:
+            if data and data["score"] > 10 and data["htf_bullish"]:
                 candidates.append(data)
             time.sleep(0.1)
         except: pass
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    log.info(f"Found {len(candidates)} candidates")
+    log.info(f"Found {len(candidates)} 1H-confirmed candidates")
     return candidates[:25]
 
 def analyze_with_claude(candidates):
@@ -221,10 +226,43 @@ def run_cycle():
     log.info(f"=== Cycle {now.strftime('%H:%M UTC')} ===")
     try:
         candidates = scan()
-        if not candidates: return
-        result = analyze_with_claude(candidates)
+        if not candidates:
+            state["prev_top_symbols"] = []
+            return
+
+        # Double-scan confirmation: only pairs seen in previous scan too
+        current_symbols = [c["symbol"] for c in candidates[:10]]
+        if state["prev_top_symbols"]:
+            confirmed = [c for c in candidates if c["symbol"] in state["prev_top_symbols"]]
+            log.info(f"Double-confirmed pairs: {[c['symbol'] for c in confirmed]}")
+            if not confirmed:
+                log.info("No double-confirmed pairs this scan, waiting...")
+                state["prev_top_symbols"] = current_symbols
+                state["scan_count"] += 1
+                state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
+                return
+            candidates_to_analyze = confirmed[:25]
+        else:
+            log.info("First scan of session, storing symbols for next confirmation")
+            state["prev_top_symbols"] = current_symbols
+            state["scan_count"] += 1
+            state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
+            return
+
+        state["prev_top_symbols"] = current_symbols
+
+        result = analyze_with_claude(candidates_to_analyze)
         pairs = result.get("top_pairs", [])
-        if not pairs: return
+        if not pairs:
+            log.info("Claude found no qualifying pairs")
+            return
+
+        # Enforce SL/TP percentages
+        for p in pairs:
+            entry = p.get("entry", 0)
+            if entry > 0:
+                p["stop_loss"] = round(entry * 0.985, 8)
+                p["take_profit"] = round(entry * 1.035, 8)
 
         scan_time = now.strftime("%H:%M UTC")
         state["signals"] = [{"rank": i+1, **p, "scan_time": scan_time} for i, p in enumerate(pairs[:3])]
