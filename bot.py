@@ -14,7 +14,6 @@ OKX_BASE = "https://www.okx.com"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler()])
 log = logging.getLogger("JARVIS")
 
-# Store last signals
 state = {"signals": [], "last_scan": None, "next_scan": None, "scan_count": 0}
 
 PAIRS = [
@@ -44,11 +43,28 @@ PAIRS = [
     "ZRX-USDT","BAT-USDT","ENJ-USDT","STORJ-USDT","PAXG-USDT",
 ]
 
-SCREEN_PROMPT = """You are a crypto momentum analyst for OKX spot market.
-Analyze the provided pairs and select TOP 3 most likely to rise in next 60 minutes.
-Criteria: positive momentum today, high volume, not at daily high, bullish structure.
+SCREEN_PROMPT = """You are an institutional crypto momentum analyst for OKX spot market.
+Analyze the provided pairs with full technical data and select TOP 3 most likely to rise in next 60 minutes.
+
+For each pair you receive:
+- price, change24h, volume
+- RSI14 (overbought >70, oversold <30)
+- MACD signal (bullish/bearish crossover)
+- MA trend (price vs MA20: above=bullish, below=bearish)
+- Candle pattern (last 3 candles: direction and size)
+- Distance from daily high (room to grow)
+- Funding rate (negative=shorts paying=bullish)
+
+Selection criteria:
+1. RSI between 45-65 (momentum but not overbought)
+2. MACD bullish or crossing up
+3. Price above MA20
+4. Volume spike on recent candles
+5. Not at daily high (room to grow >1%)
+6. Negative or low funding rate
+
 Reply ONLY valid JSON no markdown:
-{"top_pairs": [{"symbol": "XXX-USDT", "direction": "LONG", "entry": 0.0, "stop_loss": 0.0, "take_profit": 0.0, "score": 85, "reason": "one sentence in Russian"}]}"""
+{"top_pairs": [{"symbol": "XXX-USDT", "direction": "LONG", "entry": 0.0, "stop_loss": 0.0, "take_profit": 0.0, "score": 85, "rsi": 55, "macd": "bullish", "reason": "one sentence in Russian"}]}"""
 
 def tg(msg):
     try:
@@ -71,27 +87,135 @@ def get_ticker(symbol):
                 "vol24h": round(vol,0), "high24h": float(t.get("high24h",last)), "low24h": float(t.get("low24h",last))}
     except: return None
 
+def get_candles(symbol, bar="15m", limit=20):
+    try:
+        r = requests.get(f"{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}", timeout=5)
+        data = r.json().get("data", [])
+        if not data: return None
+        candles = [{"t": c[0], "o": float(c[1]), "h": float(c[2]), "l": float(c[3]), "c": float(c[4]), "v": float(c[5])} for c in reversed(data)]
+        return candles
+    except: return None
+
+def calc_rsi(candles, period=14):
+    if len(candles) < period + 1: return 50
+    closes = [c["c"] for c in candles]
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i-1]
+        gains.append(max(diff, 0))
+        losses.append(max(-diff, 0))
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0: return 100
+    rs = avg_gain / avg_loss
+    return round(100 - (100 / (1 + rs)), 1)
+
+def calc_macd(candles):
+    if len(candles) < 26: return "unknown"
+    closes = [c["c"] for c in candles]
+    def ema(data, n):
+        k = 2/(n+1)
+        e = data[0]
+        for d in data[1:]: e = d*k + e*(1-k)
+        return e
+    ema12 = ema(closes[-12:], 12)
+    ema26 = ema(closes[-26:], 26)
+    macd = ema12 - ema26
+    prev_ema12 = ema(closes[-13:-1], 12)
+    prev_ema26 = ema(closes[-27:-1], 26)
+    prev_macd = prev_ema12 - prev_ema26
+    if macd > 0 and macd > prev_macd: return "bullish"
+    if macd < 0 and macd < prev_macd: return "bearish"
+    if macd > prev_macd: return "crossing_up"
+    return "crossing_down"
+
+def calc_ma(candles, period=20):
+    if len(candles) < period: return None
+    closes = [c["c"] for c in candles[-period:]]
+    return sum(closes) / period
+
+def candle_pattern(candles):
+    if len(candles) < 3: return "unknown"
+    last3 = candles[-3:]
+    directions = ["green" if c["c"] > c["o"] else "red" for c in last3]
+    sizes = [abs(c["c"] - c["o"]) / c["o"] * 100 for c in last3]
+    pattern = f"{directions[-3]},{directions[-2]},{directions[-1]} sizes:{sizes[-1]:.1f}%"
+    return pattern
+
+def get_funding(symbol):
+    try:
+        inst = symbol.replace("-USDT", "-USDT-SWAP")
+        r = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate?instId={inst}", timeout=5)
+        d = r.json().get("data", [{}])[0]
+        return round(float(d.get("fundingRate", 0)) * 100, 4)
+    except: return 0.0
+
+def analyze_pair(symbol):
+    t = get_ticker(symbol)
+    if not t: return None
+    if t["vol24h"] < 5000: return None
+
+    candles = get_candles(symbol, "15m", 30)
+    rsi = calc_rsi(candles) if candles else 50
+    macd = calc_macd(candles) if candles else "unknown"
+    ma20 = calc_ma(candles) if candles else None
+    pattern = candle_pattern(candles) if candles else "unknown"
+    above_ma = t["price"] > ma20 if ma20 else False
+    funding = get_funding(symbol)
+
+    dist = (t["high24h"] - t["price"]) / t["high24h"] * 100 if t["high24h"] > 0 else 0
+
+    # Score
+    score = 0
+    score += min(t["change24h"] * 3, 30)
+    score += min(t["vol24h"] / 50000, 20)
+    score += 15 if 45 <= rsi <= 65 else (5 if 35 <= rsi < 45 else 0)
+    score += 15 if "bullish" in macd or "crossing_up" in macd else 0
+    score += 10 if above_ma else 0
+    score += 10 if dist > 1 else 0
+
+    return {
+        "symbol": symbol,
+        "price": t["price"],
+        "change24h": t["change24h"],
+        "vol24h": t["vol24h"],
+        "high24h": t["high24h"],
+        "low24h": t["low24h"],
+        "rsi": rsi,
+        "macd": macd,
+        "above_ma20": above_ma,
+        "ma20": round(ma20, 8) if ma20 else None,
+        "candle_pattern": pattern,
+        "funding": funding,
+        "dist_from_high": round(dist, 2),
+        "score": round(score, 1),
+    }
+
 def scan():
-    log.info(f"Scanning {len(PAIRS)} pairs...")
+    log.info(f"Scanning {len(PAIRS)} pairs with technical analysis...")
     candidates = []
     for symbol in PAIRS:
-        t = get_ticker(symbol)
-        if not t: continue
-        if t["vol24h"] < 5000: continue
-        dist = (t["high24h"] - t["price"]) / t["high24h"] * 100 if t["high24h"] > 0 else 0
-        score = t["change24h"] * 3 + min(t["vol24h"]/50000, 30) + (10 if dist > 2 else 0)
-        candidates.append({**t, "score": round(score,1), "dist_from_high": round(dist,2)})
-        time.sleep(0.05)
+        try:
+            data = analyze_pair(symbol)
+            if data and data["score"] > 10:
+                candidates.append(data)
+            time.sleep(0.1)
+        except Exception as e:
+            pass
     candidates.sort(key=lambda x: x["score"], reverse=True)
     log.info(f"Found {len(candidates)} candidates")
     return candidates[:25]
 
-def analyze(candidates):
+def analyze_with_claude(candidates):
     client = Anthropic(api_key=ANTHROPIC_KEY)
     lines = [f"Market data UTC {datetime.utcnow().strftime('%H:%M')}:\n"]
     for c in candidates:
-        lines.append(f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} dist_from_high={c['dist_from_high']:.1f}%")
-    msg = client.messages.create(model="claude-sonnet-4-6", max_tokens=800,
+        lines.append(
+            f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} "
+            f"RSI={c['rsi']} MACD={c['macd']} above_MA20={'YES' if c['above_ma20'] else 'NO'} "
+            f"pattern={c['candle_pattern']} funding={c['funding']}% dist_high={c['dist_from_high']:.1f}% score={c['score']}"
+        )
+    msg = client.messages.create(model="claude-sonnet-4-6", max_tokens=1000,
         system=SCREEN_PROMPT, messages=[{"role": "user", "content": "\n".join(lines)}])
     text = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
     return json.loads(text)
@@ -104,22 +228,17 @@ def run_cycle():
     log.info(f"=== Cycle {now.strftime('%H:%M UTC')} ===")
     try:
         candidates = scan()
-        if not candidates:
-            return
-        result = analyze(candidates)
+        if not candidates: return
+        result = analyze_with_claude(candidates)
         pairs = result.get("top_pairs", [])
-        if not pairs:
-            return
+        if not pairs: return
 
-        # Store signals in state
         scan_time = now.strftime("%H:%M UTC")
         state["signals"] = [{"rank": i+1, **p, "scan_time": scan_time} for i, p in enumerate(pairs[:3])]
         state["last_scan"] = scan_time
         state["scan_count"] += 1
-        next_time = datetime.now(timezone.utc).timestamp() + INTERVAL_MIN * 60
-        state["next_scan"] = next_time
+        state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
 
-        # Send to Telegram
         header = f"🤖 <b>JARVIS ANALYST</b> | {scan_time}\n━━━━━━━━━━━━━━━━\n"
         signals = []
         for i, p in enumerate(pairs[:3]):
@@ -128,22 +247,31 @@ def run_cycle():
             sl = p.get("stop_loss", 0)
             tp = p.get("take_profit", 0)
             rr = abs((tp-entry)/(entry-sl)) if abs(entry-sl) > 0 else 0
-            signals.append(f"🟢 <b>#{i+1} {sym}/USDT</b>\n💰 Вход: <b>{entry}</b>\n🛑 SL: {sl}\n🎯 TP: {tp}\n📊 RR: 1:{rr:.1f} | Score: {p.get('score',0)}\n💬 {p.get('reason','')}")
+            rsi = p.get("rsi", "—")
+            macd = p.get("macd", "—")
+            signals.append(
+                f"🟢 <b>#{i+1} {sym}/USDT</b>\n"
+                f"💰 Вход: <b>{entry}</b>\n"
+                f"🛑 SL: {sl}\n"
+                f"🎯 TP: {tp}\n"
+                f"📊 RR: 1:{rr:.1f} | Score: {p.get('score',0)}\n"
+                f"📈 RSI: {rsi} | MACD: {macd}\n"
+                f"💬 {p.get('reason','')}"
+            )
         tg(header + "\n\n".join(signals) + "\n\n━━━━━━━━━━━━━━━━\n⚠️ Не финансовый совет.")
         log.info(f"Sent {len(pairs)} signals")
     except Exception as e:
         log.error(f"Error: {e}", exc_info=True)
 
 def main():
-    log.info(f"JARVIS ANALYST | interval={INTERVAL_MIN}min")
-    tg(f"🚀 <b>JARVIS ANALYST запущен!</b>\n⏱ Каждые {INTERVAL_MIN} мин\n🌐 Dashboard доступен")
+    log.info(f"JARVIS ANALYST v2 | interval={INTERVAL_MIN}min | RSI+MACD+Candles enabled")
+    tg(f"🚀 <b>JARVIS ANALYST v2 запущен!</b>\n📊 RSI + MACD + Свечи + Funding Rate\n⏱ Каждые {INTERVAL_MIN} мин")
     time.sleep(30)
     while True:
         run_cycle()
         log.info(f"Next in {INTERVAL_MIN} min")
         time.sleep(INTERVAL_MIN * 60)
 
-# Flask web dashboard
 app = Flask(__name__)
 
 DASHBOARD = """<!DOCTYPE html>
@@ -152,7 +280,6 @@ DASHBOARD = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <title>JARVIS ANALYST</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet">
 <style>
@@ -166,36 +293,34 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 .title{font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:#fff;letter-spacing:2px}
 .sub{font-size:9px;color:#30363d;letter-spacing:2px}
 .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;animation:pulse 1.5s infinite}
-.status{font-size:10px;letter-spacing:1px}
-.timer{font-size:10px;color:#30363d;margin-top:2px;text-align:right}
 .stats{display:flex;gap:8px;margin-top:10px}
 .stat{flex:1;background:#0d1117;border:1px solid #161b22;border-radius:8px;padding:6px 8px;text-align:center}
 .stat-v{font-size:14px;font-weight:700;color:#fff}
 .stat-l{font-size:8px;color:#30363d;letter-spacing:1px}
 .body{padding:12px}
 .card{background:#0d1117;border:1px solid #00e67622;border-radius:14px;padding:14px 16px;margin-bottom:12px}
-.card-time{font-size:10px;color:#30363d;margin-bottom:8px}
-.sig{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #0d1117}
+.card-time{font-size:10px;color:#30363d;margin-bottom:10px}
+.sig{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #161b22}
 .sig:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
-.sig-title{font-size:14px;font-weight:700;color:#00e676;margin-bottom:6px}
-.sig-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+.sig-title{font-size:14px;font-weight:700;color:#00e676;margin-bottom:8px}
+.sig-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
 .sig-label{color:#455a64}
-.sig-val{font-weight:700}
-.sig-reason{font-size:11px;color:#546e7a;margin-top:6px;line-height:1.5}
+.sig-reason{font-size:11px;color:#546e7a;margin-top:8px;line-height:1.5;padding-top:8px;border-top:1px solid #161b22}
+.badge{font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;letter-spacing:1px}
+.badge-bull{background:#00e67622;color:#00e676}
+.badge-bear{background:#ff174422;color:#ff1744}
+.badge-neu{background:#58a6ff22;color:#58a6ff}
 .empty{background:#0d1117;border:1px solid #161b22;border-radius:14px;padding:40px 20px;text-align:center}
-.empty-icon{font-size:28px;margin-bottom:12px}
-.empty-t{font-size:12px;color:#30363d;letter-spacing:2px;margin-bottom:6px}
-.empty-s{font-size:11px;color:#21262d;line-height:1.6}
-.footer{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#080b0f;border-top:1px solid #0d1117;padding:10px;text-align:center;font-size:9px;color:#21262d;letter-spacing:1px}
+.footer{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#080b0f;border-top:1px solid #0d1117;padding:10px;text-align:center;font-size:9px;color:#21262d}
 </style>
 </head>
 <body>
 <div class="header">
   <div class="row">
-    <div><div class="title">JARVIS</div><div class="sub">ANALYST · 300 PAIRS · OKX</div></div>
+    <div><div class="title">JARVIS</div><div class="sub">ANALYST v2 · RSI · MACD · OKX</div></div>
     <div>
-      <div><span class="dot" id="dot" style="background:#ffea00"></span><span class="status" id="st" style="color:#ffea00">LOADING</span></div>
-      <div class="timer" id="tmr"></div>
+      <div><span class="dot" id="dot" style="background:#ffea00"></span><span id="st" style="font-size:10px;color:#ffea00">LOADING</span></div>
+      <div id="tmr" style="font-size:10px;color:#30363d;margin-top:2px;text-align:right"></div>
     </div>
   </div>
   <div class="stats">
@@ -205,79 +330,66 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
   </div>
 </div>
 <div class="body" id="body">
-  <div class="empty"><div class="empty-icon">⏳</div><div class="empty-t">ЗАГРУЗКА</div><div class="empty-s">Получаем данные...</div></div>
+  <div class="empty"><div style="font-size:24px;margin-bottom:12px">⏳</div><div style="font-size:12px;color:#30363d;letter-spacing:2px">ЗАГРУЗКА</div></div>
 </div>
 <div class="footer">⚠️ НЕ ЯВЛЯЕТСЯ ФИНАНСОВЫМ СОВЕТОМ · ТОРГУЙ НА СВОЙ РИСК</div>
 <script>
-let prevSignals = null;
-
-function fmtRR(entry, sl, tp) {
-  const r = sl && entry ? Math.abs((tp-entry)/(entry-sl)) : 0;
-  return r > 0 ? `1:${r.toFixed(1)}` : '—';
+let prev = null;
+function macdBadge(m) {
+  if (!m) return '';
+  if (m.includes('bullish')) return '<span class="badge badge-bull">BULL</span>';
+  if (m.includes('bearish')) return '<span class="badge badge-bear">BEAR</span>';
+  if (m.includes('crossing_up')) return '<span class="badge badge-bull">↑ CROSS</span>';
+  if (m.includes('crossing_down')) return '<span class="badge badge-bear">↓ CROSS</span>';
+  return '<span class="badge badge-neu">'+m+'</span>';
 }
-
-function renderSignals(data) {
-  const body = document.getElementById('body');
+function rsiColor(r) {
+  if (r >= 70) return '#ff5252';
+  if (r <= 30) return '#69f0ae';
+  if (r >= 45 && r <= 65) return '#00e676';
+  return '#58a6ff';
+}
+function render(data) {
   const sigs = data.signals || [];
-  
   document.getElementById('sc').textContent = data.scan_count || 0;
-  
   const dot = document.getElementById('dot');
   const st = document.getElementById('st');
-  if (sigs.length > 0) {
-    dot.style.background = '#00e676';
-    st.style.color = '#00e676';
-    st.textContent = 'LIVE';
-  } else {
-    dot.style.background = '#ffea00';
-    st.style.color = '#ffea00';
-    st.textContent = 'WAITING';
-  }
-
-  if (sigs.length === 0) {
-    body.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-t">ОЖИДАНИЕ СИГНАЛА</div><div class="empty-s">Бот сканирует рынок каждые 15 минут<br>Сигналы появятся здесь автоматически</div></div>';
+  if (sigs.length > 0) { dot.style.background='#00e676'; st.style.color='#00e676'; st.textContent='LIVE'; }
+  else { dot.style.background='#ffea00'; st.style.color='#ffea00'; st.textContent='WAITING'; }
+  if (!sigs.length) {
+    document.getElementById('body').innerHTML='<div class="empty"><div style="font-size:24px;margin-bottom:12px">⏳</div><div style="font-size:12px;color:#30363d;letter-spacing:2px">ОЖИДАНИЕ СИГНАЛА</div><div style="font-size:11px;color:#21262d;margin-top:6px;line-height:1.6">Бот сканирует рынок каждые 15 минут</div></div>';
     return;
   }
-
-  const changed = JSON.stringify(sigs) !== prevSignals;
-  prevSignals = JSON.stringify(sigs);
-
-  body.innerHTML = `<div class="card ${changed ? 'fade' : ''}">
-    <div class="card-time">🤖 JARVIS ANALYST · ${data.last_scan || ''}</div>
-    ${sigs.map(s => {
-      const sym = s.symbol.replace('-USDT','');
-      const rr = fmtRR(s.entry, s.stop_loss, s.take_profit);
-      return `<div class="sig">
-        <div class="sig-title">🟢 #${s.rank} ${sym}/USDT · Score ${s.score}</div>
-        <div class="sig-row"><span class="sig-label">💰 Вход</span><span class="sig-val" style="color:#fff">${s.entry}</span></div>
-        <div class="sig-row"><span class="sig-label">🛑 SL</span><span class="sig-val" style="color:#ff5252">${s.stop_loss}</span></div>
-        <div class="sig-row"><span class="sig-label">🎯 TP</span><span class="sig-val" style="color:#69f0ae">${s.take_profit}</span></div>
-        <div class="sig-row"><span class="sig-label">📊 RR</span><span class="sig-val" style="color:#58a6ff">${rr}</span></div>
-        <div class="sig-reason">💬 ${s.reason || ''}</div>
-      </div>`;
-    }).join('')}
-  </div>`;
+  const changed = JSON.stringify(sigs) !== prev;
+  prev = JSON.stringify(sigs);
+  document.getElementById('body').innerHTML = '<div class="card '+(changed?'fade':'')+'"><div class="card-time">🤖 JARVIS ANALYST v2 · '+(data.last_scan||'')+'</div>'+
+  sigs.map(s => {
+    const sym = s.symbol.replace('-USDT','');
+    const entry = s.entry||0, sl = s.stop_loss||0, tp = s.take_profit||0;
+    const rr = Math.abs(sl&&entry ? (tp-entry)/(entry-sl) : 0);
+    return '<div class="sig"><div class="sig-title">🟢 #'+s.rank+' '+sym+'/USDT · Score '+s.score+'</div>'+
+    '<div class="sig-row"><span class="sig-label">💰 Вход</span><span style="font-weight:700;color:#fff">'+entry+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">🛑 SL</span><span style="font-weight:700;color:#ff5252">'+sl+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">🎯 TP</span><span style="font-weight:700;color:#69f0ae">'+tp+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📊 RR</span><span style="color:#58a6ff">1:'+rr.toFixed(1)+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📈 RSI</span><span style="color:'+rsiColor(s.rsi||50)+'">'+( s.rsi||'—')+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📉 MACD</span>'+macdBadge(s.macd)+'</div>'+
+    '<div class="sig-reason">💬 '+(s.reason||'')+'</div></div>';
+  }).join('')+'</div>';
 }
-
-function updateTimer(nextScan) {
-  if (!nextScan) return;
-  const diff = Math.max(0, Math.floor(nextScan - Date.now()/1000));
-  const m = Math.floor(diff/60);
-  const s = diff%60;
-  document.getElementById('tmr').textContent = diff > 0 ? `след: ${m}:${String(s).padStart(2,'0')}` : 'сканирование...';
+function updateTimer(n) {
+  if (!n) return;
+  const d = Math.max(0, Math.floor(n - Date.now()/1000));
+  document.getElementById('tmr').textContent = d>0 ? 'след: '+Math.floor(d/60)+':'+String(d%60).padStart(2,'0') : '';
 }
-
 async function fetchData() {
   try {
     const res = await fetch('/signals');
     const data = await res.json();
-    renderSignals(data);
-    setInterval(() => updateTimer(data.next_scan), 1000);
-  } catch(e) {
-    document.getElementById('st').textContent = 'ERROR';
-  }
+    render(data);
+    setInterval(()=>updateTimer(data.next_scan), 1000);
+  } catch(e) { document.getElementById('st').textContent='ERROR'; }
 }
-
 fetchData();
 setInterval(fetchData, 15000);
 </script>
