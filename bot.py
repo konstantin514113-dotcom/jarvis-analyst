@@ -570,6 +570,11 @@ setInterval(fetchData, 15000);
 def dashboard():
     return Response(DASHBOARD, mimetype="text/html")
 
+@app.route("/v2")
+def dashboard_v2():
+    html = open("/app/panel.html").read() if __import__("os").path.exists("/app/panel.html") else "<h1>Panel not found</h1>"
+    return Response(html, mimetype="text/html")
+
 @app.route("/signals")
 def signals():
     return jsonify(state)
