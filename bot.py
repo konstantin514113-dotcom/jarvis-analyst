@@ -219,7 +219,7 @@ def scan():
     for symbol in PAIRS:
         try:
             data = analyze_pair(symbol)
-            if data and data["score"] >= 89 and data["htf_bullish"]:
+            if data and data["score"] > 10 and data["htf_bullish"]:
                 candidates.append(data)
             time.sleep(0.1)
         except: pass
@@ -346,126 +346,222 @@ def main():
 
 app = Flask(__name__)
 
+# Auto-start when loaded by gunicorn (not just direct python run)
+def _startup():
+    load_pairs()
+    threading.Thread(target=main, daemon=True).start()
+
+import atexit
+_startup_thread = threading.Thread(target=_startup, daemon=True)
+_startup_thread.start()
+
 DASHBOARD = """<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>JARVIS</title>
+<title>JARVIS ANALYST</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max-width:430px;margin:0 auto;min-height:100vh;padding-bottom:20px}
-.header{padding:16px 16px 10px;display:flex;justify-content:space-between;align-items:center}
-.title{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:#fff;letter-spacing:3px}
-.live{display:flex;align-items:center;gap:6px;font-size:10px}
-.dot{width:7px;height:7px;border-radius:50%;display:inline-block;animation:pulse 1.5s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
-.timer{text-align:center;padding:6px;font-size:11px;color:#30363d;letter-spacing:1px}
-.timer span{color:#58a6ff}
-.cards{padding:8px 12px;display:flex;flex-direction:column;gap:10px}
-.card{background:#0d1117;border:1px solid #161b22;border-radius:16px;padding:16px;position:relative;overflow:hidden}
-.card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
-.card.r1::before{background:linear-gradient(90deg,#00e676,#69f0ae)}
-.card.r2::before{background:linear-gradient(90deg,#58a6ff,#79c0ff)}
-.card.r3::before{background:linear-gradient(90deg,#ffea00,#ffd740)}
-.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-.pair{font-size:18px;font-weight:700;color:#fff}
-.score{font-size:11px;padding:3px 8px;border-radius:20px;font-weight:700}
-.sc1{background:#00e67211;color:#00e676}
-.sc2{background:#58a6ff11;color:#58a6ff}
-.sc3{background:#ffea0011;color:#ffea00}
-.confirm{font-size:10px;color:#00e676;margin-bottom:12px}
-.prices{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
-.price-box{background:#080b0f;border-radius:10px;padding:10px;text-align:center}
-.price-label{font-size:8px;color:#455a64;letter-spacing:1px;margin-bottom:4px}
-.price-val{font-size:12px;font-weight:700}
-.pv-e{color:#fff}.pv-s{color:#ff5252}.pv-t{color:#00e676}
-.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.btn-trade{background:linear-gradient(135deg,#00e676,#00c853);border:none;border-radius:10px;padding:13px;font-size:12px;font-weight:700;color:#000;font-family:'JetBrains Mono',monospace;cursor:pointer;letter-spacing:1px}
-.btn-skip{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:13px;font-size:12px;color:#546e7a;font-family:'JetBrains Mono',monospace;cursor:pointer}
-.day-result{margin:8px 12px 16px;background:#0d1117;border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
-.day-label{font-size:9px;color:#30363d;letter-spacing:2px}
-.day-val{font-size:16px;font-weight:700}
-.waiting{padding:80px 20px;text-align:center}
-.waiting-icon{font-size:36px;margin-bottom:14px}
-.waiting-text{font-size:11px;color:#30363d;letter-spacing:2px;margin-bottom:6px}
-.waiting-sub{font-size:10px;color:#21262d}
+body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max-width:430px;margin:0 auto;padding-bottom:70px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fade{animation:fadeIn 0.4s ease}
+.header{position:sticky;top:0;z-index:10;background:#080b0f;border-bottom:1px solid #0d1117;padding:14px 14px 10px}
+.row{display:flex;justify-content:space-between;align-items:flex-start}
+.title{font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:#fff;letter-spacing:2px}
+.sub{font-size:9px;color:#30363d;letter-spacing:2px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;animation:pulse 1.5s infinite}
+.stats{display:flex;gap:6px;margin-top:10px}
+.stat{flex:1;background:#0d1117;border:1px solid #161b22;border-radius:8px;padding:6px 8px;text-align:center}
+.stat-v{font-size:13px;font-weight:700;color:#fff}
+.stat-l{font-size:8px;color:#30363d;letter-spacing:1px}
+.tabs{display:flex;border-bottom:1px solid #161b22;margin:0 14px}
+.tab{flex:1;text-align:center;padding:10px 0;font-size:10px;letter-spacing:1px;color:#30363d;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s}
+.tab.active{color:#00e676;border-bottom-color:#00e676}
+.body{padding:12px}
+.card{background:#0d1117;border:1px solid #00e67622;border-radius:14px;padding:14px 16px;margin-bottom:12px}
+.card-time{font-size:10px;color:#30363d;margin-bottom:10px}
+.sig{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #161b22}
+.sig:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.sig-title{font-size:13px;font-weight:700;color:#00e676;margin-bottom:6px}
+.sig-row{display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px}
+.sig-label{color:#455a64}
+.sig-reason{font-size:10px;color:#546e7a;margin-top:6px;line-height:1.5;padding-top:6px;border-top:1px solid #161b22}
+.badge{font-size:9px;padding:2px 5px;border-radius:4px;font-weight:700}
+.badge-bull{background:#00e67222;color:#00e672}
+.badge-bear{background:#ff174422;color:#ff1744}
+.badge-neu{background:#58a6ff22;color:#58a6ff}
+.hist-item{background:#0d1117;border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #161b22}
+.hist-item.win{border-left-color:#00e676}
+.hist-item.loss{border-left-color:#ff1744}
+.hist-item.active{border-left-color:#ffea00}
+.hist-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.hist-sym{font-size:12px;font-weight:700;color:#eceff1}
+.hist-time{font-size:9px;color:#30363d}
+.hist-bars{margin-top:6px}
+.bar-row{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.bar-label{font-size:9px;color:#455a64;width:28px}
+.bar-track{flex:1;height:4px;background:#161b22;border-radius:2px;overflow:hidden}
+.bar-fill{height:100%;border-radius:2px;transition:width 0.3s}
+.bar-val{font-size:9px;width:45px;text-align:right}
+.pct-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px}
+.empty{background:#0d1117;border:1px solid #161b22;border-radius:14px;padding:30px 20px;text-align:center}
+.footer{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#080b0f;border-top:1px solid #0d1117;padding:8px;text-align:center;font-size:9px;color:#21262d}
 </style>
 </head>
 <body>
 <div class="header">
-  <div class="title">JARVIS</div>
-  <div class="live"><div class="dot" id="dot" style="background:#ffea00"></div><span id="st" style="color:#ffea00;font-size:10px">LOADING</span></div>
+  <div class="row">
+    <div><div class="title">JARVIS</div><div class="sub">ANALYST v2 · RSI · MACD · OKX</div></div>
+    <div>
+      <div><span class="dot" id="dot" style="background:#ffea00"></span><span id="st" style="font-size:10px;color:#ffea00">LOADING</span></div>
+      <div id="tmr" style="font-size:10px;color:#30363d;margin-top:2px;text-align:right"></div>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-v" id="sc">0</div><div class="stat-l">СКАНОВ</div></div>
+    <div class="stat"><div class="stat-v" id="hc">0</div><div class="stat-l">СИГНАЛОВ</div></div>
+    <div class="stat"><div class="stat-v" id="wc" style="color:#00e676">0</div><div class="stat-l">ПОБЕД</div></div>
+    <div class="stat"><div class="stat-v" id="lc" style="color:#ff1744">0</div><div class="stat-l">ПОТЕРЬ</div></div>
+  </div>
 </div>
-<div class="timer">след. скан через <span id="tmr">—</span></div>
-<div class="cards" id="cards">
-  <div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует каждые 15 минут</div></div>
+<div class="tabs">
+  <div class="tab active" id="tab-signals" onclick="switchTab('signals')">СИГНАЛЫ</div>
+  <div class="tab" id="tab-history" onclick="switchTab('history')">ИСТОРИЯ ДНЯ</div>
 </div>
-<div class="day-result">
-  <div class="day-label">ИТОГ ДНЯ</div>
-  <div class="day-val" id="day-val" style="color:#30363d">—</div>
+<div class="body" id="body-signals">
+  <div class="empty"><div style="font-size:24px;margin-bottom:10px">⏳</div><div style="font-size:11px;color:#30363d">ЗАГРУЗКА...</div></div>
 </div>
+<div class="body" id="body-history" style="display:none">
+  <div class="empty"><div style="font-size:24px;margin-bottom:10px">📋</div><div style="font-size:11px;color:#30363d">ИСТОРИЯ ПОЯВИТСЯ ПОСЛЕ ПЕРВОГО СИГНАЛА</div></div>
+</div>
+<div class="footer">⚠️ НЕ ЯВЛЯЕТСЯ ФИНАНСОВЫМ СОВЕТОМ · ТОРГУЙ НА СВОЙ РИСК</div>
 <script>
-function fmt(n){return n!==undefined&&n!==null?parseFloat(n).toPrecision(6)*1:0}
-function trade(sym){window.open('https://www.okx.com/trade-swap/'+sym.toLowerCase().replace('-usdt','')+'-usdt-swap','_blank')}
+let currentTab = 'signals';
+let prevSig = null;
+let data = {};
 
-function renderCards(sigs){
-  if(!sigs||!sigs.length){
-    document.getElementById('cards').innerHTML='<div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует каждые 15 минут</div></div>';
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tab-signals').className = 'tab' + (tab==='signals'?' active':'');
+  document.getElementById('tab-history').className = 'tab' + (tab==='history'?' active':'');
+  document.getElementById('body-signals').style.display = tab==='signals' ? 'block' : 'none';
+  document.getElementById('body-history').style.display = tab==='history' ? 'block' : 'none';
+}
+
+function macdBadge(m) {
+  if (!m) return '';
+  if (m.includes('bullish')) return '<span class="badge badge-bull">BULL</span>';
+  if (m.includes('bearish')) return '<span class="badge badge-bear">BEAR</span>';
+  if (m.includes('crossing_up')) return '<span class="badge badge-bull">↑</span>';
+  return '<span class="badge badge-neu">↓</span>';
+}
+
+function rsiColor(r) {
+  if (r >= 70) return '#ff5252';
+  if (r <= 30) return '#69f0ae';
+  if (r >= 45 && r <= 65) return '#00e676';
+  return '#58a6ff';
+}
+
+function renderSignals(d) {
+  const sigs = d.signals || [];
+  if (!sigs.length) {
+    document.getElementById('body-signals').innerHTML='<div class="empty"><div style="font-size:24px;margin-bottom:10px">⏳</div><div style="font-size:11px;color:#30363d;letter-spacing:1px">ОЖИДАНИЕ СИГНАЛА</div><div style="font-size:10px;color:#21262d;margin-top:6px">Бот сканирует каждые 15 минут</div></div>';
     return;
   }
-  const cls=['r1 sc1','r2 sc2','r3 sc3'];
-  const scCls=['sc1','sc2','sc3'];
-  document.getElementById('cards').innerHTML = sigs.map((s,i)=>{
-    const sym=s.symbol.replace('-USDT','');
-    return '<div class="card '+( i===0?'r1':i===1?'r2':'r3')+'">'+
-      '<div class="card-head"><div class="pair">'+sym+'/USDT</div><div class="score '+(i===0?'sc1':i===1?'sc2':'sc3')+'">SCORE '+s.score+'</div></div>'+
-      '<div class="confirm">✅ 1H подтверждён · двойной скан</div>'+
-      '<div class="prices">'+
-        '<div class="price-box"><div class="price-label">ВХОД</div><div class="price-val pv-e">'+s.entry+'</div></div>'+
-        '<div class="price-box"><div class="price-label">СТОП</div><div class="price-val pv-s">'+s.stop_loss+'</div></div>'+
-        '<div class="price-box"><div class="price-label">ТЕЙК</div><div class="price-val pv-t">'+s.take_profit+'</div></div>'+
+  const changed = JSON.stringify(sigs) !== prevSig;
+  prevSig = JSON.stringify(sigs);
+  document.getElementById('body-signals').innerHTML = '<div class="card '+(changed?'fade':'')+'"><div class="card-time">🤖 JARVIS ANALYST v2 · '+(d.last_scan||'')+'</div>'+
+  sigs.map(s => {
+    const sym = s.symbol.replace('-USDT','');
+    const e=s.entry||0,sl=s.stop_loss||0,tp=s.take_profit||0;
+    const rr=Math.abs(sl&&e?(tp-e)/(e-sl):0);
+    return '<div class="sig"><div class="sig-title">🟢 #'+s.rank+' '+sym+'/USDT · Score '+s.score+'</div>'+
+    '<div class="sig-row"><span class="sig-label">💰 Вход</span><span style="font-weight:700;color:#fff">'+e+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">🛑 SL</span><span style="color:#ff5252;font-weight:700">'+sl+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">🎯 TP</span><span style="color:#69f0ae;font-weight:700">'+tp+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📊 RR</span><span style="color:#58a6ff">1:'+rr.toFixed(1)+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📈 RSI 15m</span><span style="color:'+rsiColor(s.rsi||50)+'">'+( s.rsi||'—')+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📊 RSI 1H</span><span style="color:'+rsiColor(s.rsi_1h||50)+'">'+(s.rsi_1h||'—')+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📉 MACD</span>'+macdBadge(s.macd)+'</div>'+
+    '<div class="sig-row"><span class="sig-label">🕐 1H</span><span style="color:'+(s.htf_bullish?'#00e676':'#ff5252')+'">'+(s.htf_bullish?'✅ ПОДТВЕРЖДЁН':'⚠️ НЕТ')+'</span></div>'+
+    '<div class="sig-reason">💬 '+(s.reason||'')+'</div></div>';
+  }).join('')+'</div>';
+}
+
+function renderHistory(d) {
+  const hist = (d.history || []).slice().reverse();
+  if (!hist.length) {
+    document.getElementById('body-history').innerHTML='<div class="empty"><div style="font-size:24px;margin-bottom:10px">📋</div><div style="font-size:11px;color:#30363d">ИСТОРИЯ ПОЯВИТСЯ ПОСЛЕ ПЕРВОГО СИГНАЛА</div></div>';
+    return;
+  }
+  let wins=0,losses=0;
+  hist.forEach(h=>{ if(h.result==='WIN') wins++; if(h.result==='LOSS') losses++; });
+  document.getElementById('wc').textContent=wins;
+  document.getElementById('lc').textContent=losses;
+  document.getElementById('hc').textContent=hist.length;
+
+  document.getElementById('body-history').innerHTML = hist.map(h => {
+    const sym = h.symbol.replace('-USDT','');
+    const pct = h.pct_change || 0;
+    const status = h.status;
+    const cls = status==='tp_hit'?'win':status==='sl_hit'?'loss':'active';
+    const pctColor = pct > 0 ? '#00e676' : pct < 0 ? '#ff1744' : '#58a6ff';
+    const statusLabel = status==='tp_hit'?'✅ TP HIT':status==='sl_hit'?'❌ SL HIT':'🔵 ACTIVE';
+
+    // Progress bars for entry, current, sl, tp
+    const range = h.take_profit - h.stop_loss;
+    const slPct = range > 0 ? 0 : 0;
+    const tpPct = 100;
+    const entryPct = range > 0 ? ((h.entry - h.stop_loss) / range * 100) : 50;
+    const currPct = range > 0 ? Math.max(0,Math.min(100,(h.current_price - h.stop_loss) / range * 100)) : 50;
+
+    return '<div class="hist-item '+cls+'">'+
+      '<div class="hist-header">'+
+        '<span class="hist-sym">'+sym+'/USDT</span>'+
+        '<span class="hist-time">'+h.scan_time+'</span>'+
       '</div>'+
-      '<div class="btns">'+
-        '<button class="btn-trade" onclick="trade(''+s.symbol+'')">▲ ТОРГОВАТЬ</button>'+
-        '<button class="btn-skip">ПРОПУСТИТЬ</button>'+
+      '<div class="sig-row">'+
+        '<span style="font-size:10px;color:#455a64">'+statusLabel+'</span>'+
+        '<span class="pct-badge" style="background:'+pctColor+'22;color:'+pctColor+'">'+(pct>=0?'+':'')+pct.toFixed(2)+'%</span>'+
       '</div>'+
+      '<div class="hist-bars">'+
+        '<div class="bar-row"><span class="bar-label" style="color:#455a64">SL</span><div class="bar-track"><div class="bar-fill" style="width:0%;background:#ff1744"></div></div><span class="bar-val" style="color:#ff5252;font-size:9px">'+h.stop_loss+'</span></div>'+
+        '<div class="bar-row"><span class="bar-label" style="color:#ffea00">NOW</span><div class="bar-track"><div class="bar-fill" style="width:'+currPct.toFixed(0)+'%;background:'+(pct>=0?'#00e676':'#ff1744')+'"></div></div><span class="bar-val" style="color:#fff;font-size:9px">'+h.current_price+'</span></div>'+
+        '<div class="bar-row"><span class="bar-label" style="color:#69f0ae">TP</span><div class="bar-track"><div class="bar-fill" style="width:100%;background:#00e67633"></div></div><span class="bar-val" style="color:#69f0ae;font-size:9px">'+h.take_profit+'</span></div>'+
+      '</div>'+
+      '<div style="font-size:9px;color:#30363d;margin-top:4px">Вход: '+h.entry+' · RSI: '+h.rsi+'</div>'+
     '</div>';
   }).join('');
 }
 
-function updateTimer(next){
-  if(!next){document.getElementById('tmr').textContent='—';return;}
-  const d=Math.max(0,Math.floor(next-Date.now()/1000));
-  document.getElementById('tmr').textContent=d>0?Math.floor(d/60)+':'+String(d%60).padStart(2,'0'):'сканирование...';
+function updateTimer(n) {
+  if (!n) return;
+  const d = Math.max(0, Math.floor(n - Date.now()/1000));
+  document.getElementById('tmr').textContent = d>0 ? 'след: '+Math.floor(d/60)+':'+String(d%60).padStart(2,'0') : 'сканирование...';
 }
 
-async function fetchData(){
-  try{
-    const r=await fetch('/signals');
-    const d=await r.json();
-    const sigs=d.signals||[];
-    const dot=document.getElementById('dot');
-    const st=document.getElementById('st');
-    if(sigs.length){dot.style.background='#00e676';st.style.color='#00e676';st.textContent='LIVE';}
-    else{dot.style.background='#ffea00';st.style.color='#ffea00';st.textContent='WAITING';}
-    renderCards(sigs);
-    updateTimer(d.next_scan);
-    // Day result
-    const hist=d.history||[];
-    let total=0;
-    hist.forEach(h=>{if(h.pct_change)total+=h.pct_change;});
-    const dv=document.getElementById('day-val');
-    dv.textContent=(total>=0?'+':'')+total.toFixed(2)+'%';
-    dv.style.color=total>=0?'#00e676':'#ff1744';
-  }catch(e){document.getElementById('st').textContent='ERROR';}
+async function fetchData() {
+  try {
+    const res = await fetch('/signals');
+    data = await res.json();
+    document.getElementById('sc').textContent = data.scan_count || 0;
+    const dot = document.getElementById('dot');
+    const st = document.getElementById('st');
+    if ((data.signals||[]).length > 0) { dot.style.background='#00e676'; st.style.color='#00e676'; st.textContent='LIVE'; }
+    else { dot.style.background='#ffea00'; st.style.color='#ffea00'; st.textContent='WAITING'; }
+    renderSignals(data);
+    renderHistory(data);
+    setInterval(()=>updateTimer(data.next_scan), 1000);
+  } catch(e) { document.getElementById('st').textContent='ERROR'; }
 }
 
 fetchData();
-setInterval(fetchData,15000);
-setInterval(()=>{fetch('/signals').then(r=>r.json()).then(d=>updateTimer(d.next_scan)).catch(()=>{})},1000);
+setInterval(fetchData, 15000);
 </script>
 </body>
 </html>"""
@@ -493,13 +589,6 @@ def status():
 def run_flask():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
-# Auto-start for gunicorn
-def _startup():
-    load_pairs()
-    threading.Thread(target=main, daemon=True).start()
-
-_startup_thread = threading.Thread(target=_startup, daemon=True)
-_startup_thread.start()
-
 if __name__ == "__main__":
-    pass  # gunicorn handles startup
+    threading.Thread(target=run_flask, daemon=True).start()
+    main()
