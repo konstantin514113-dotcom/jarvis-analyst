@@ -245,52 +245,10 @@ def price_monitor():
             update_history_prices()
         except: pass
 
-def send_daily_top4(now):
-    if not state["accumulated"]: return
-    sorted_pairs = sorted(state["accumulated"].values(), key=lambda x: (x["count"], x["data"].get("score",0)), reverse=True)
-    top4 = [p["data"] for p in sorted_pairs[:5]]
-    scan_time = now.strftime("%H:%M UTC")
-    for p in top4:
-        e = p.get("entry", 0)
-        if e > 0:
-            p["stop_loss"] = round(e * 0.985, 8)
-            p["take_profit"] = round(e * 1.035, 8)
-    state["signals"] = [{"rank": i+1, **p, "scan_time": scan_time} for i, p in enumerate(top4)]
-    state["last_scan"] = scan_time
-    for p in top4:
-        state["history"].append({"symbol": p["symbol"], "scan_time": scan_time, "entry": p.get("entry",0), "stop_loss": p.get("stop_loss",0), "take_profit": p.get("take_profit",0), "score": p.get("score",0), "rsi": p.get("rsi",0), "macd": p.get("macd",""), "reason": p.get("reason",""), "current_price": p.get("entry",0), "pct_change": 0.0, "status": "active", "result": None})
-    counts = {p["data"]["symbol"]: p["count"] for p in sorted_pairs[:5]}
-    msgs = []
-    for i, p in enumerate(top4):
-        sym = p["symbol"].replace("-USDT","")
-        e = p.get("entry",0); sl = p.get("stop_loss",0); tp = p.get("take_profit",0)
-        rr = abs((tp-e)/(e-sl)) if abs(e-sl) > 0 else 0
-        cnt = counts.get(p["symbol"], 0)
-        line = "#" + str(i+1) + " " + sym + "/USDT x" + str(cnt) + " scanов"
-        line += "\nВход: " + str(e) + "  SL: " + str(sl) + "  TP: " + str(tp)
-        line += "\nRR: 1:" + str(round(rr,1)) + " Score: " + str(p.get("score",0))
-        line += "\n" + str(p.get("reason",""))
-        msgs.append("\U0001f7e2 " + line)
-    header = "\U0001f3af JARVIS TOP-4 | " + scan_time + "\n\U0001f4ca Лучшие пары 11:00-13:00 UTC\n" + "-"*16 + "\n"
-    tg(header + "\n\n".join(msgs) + "\n\n" + "-"*16 + "\n\u26a0\ufe0f Не финансовый совет.")
-    log.info("Sent daily top-4: " + str([p["symbol"] for p in top4]))
-
 def run_cycle():
     now = datetime.now(timezone.utc)
-    if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
-        state["history"] = []
-        state["accumulated"] = {}
-        state["daily_signal_sent"] = False
-        state["prev_top_symbols"] = []
-        log.info("Daily reset")
     if not (SESSION_START <= now.hour < SESSION_END):
-        log.info("Outside session " + str(now.hour) + " UTC")
-        return
-    if now.hour >= 13 and not state["daily_signal_sent"] and state["accumulated"]:
-        send_daily_top4(now)
-        state["daily_signal_sent"] = True
-        return
-    if state["daily_signal_sent"]:
+        log.info(f"Outside session")
         return
     # Reset history at start of day
     if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
@@ -305,17 +263,26 @@ def run_cycle():
             slog("No candidates found")
             return
 
-        # Accumulate pairs across scans
-        for c in candidates[:10]:
-            sym = c["symbol"]
-            if sym not in state["accumulated"]:
-                state["accumulated"][sym] = {"count": 0, "data": c}
-            state["accumulated"][sym]["count"] += 1
-            state["accumulated"][sym]["data"] = c
-        log.info("Accumulated " + str(len(state["accumulated"])) + " pairs, top: " + str([c["symbol"] for c in candidates[:3]]))
-        state["scan_count"] += 1
-        state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
-        return
+        # Double-scan confirmation: only pairs seen in previous scan too
+        current_symbols = [c["symbol"] for c in candidates[:10]]
+        if state["prev_top_symbols"]:
+            confirmed = [c for c in candidates if c["symbol"] in state["prev_top_symbols"]]
+            log.info(f"Double-confirmed pairs: {[c['symbol'] for c in confirmed]}")
+            if not confirmed:
+                log.info("No double-confirmed pairs this scan, waiting...")
+                state["prev_top_symbols"] = current_symbols
+                state["scan_count"] += 1
+                state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
+                return
+            candidates_to_analyze = confirmed[:25]
+        else:
+            log.info("First scan of session, storing symbols for next confirmation")
+            state["prev_top_symbols"] = current_symbols
+            state["scan_count"] += 1
+            state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
+            return
+
+        state["prev_top_symbols"] = current_symbols
 
         result = analyze_with_claude(candidates_to_analyze)
         pairs = result.get("top_pairs", [])
@@ -336,16 +303,8 @@ def run_cycle():
         state["scan_count"] += 1
         state["next_scan"] = now.timestamp() + INTERVAL_MIN * 60
 
-        # Filter out pairs already signaled today
-        today_symbols = {h["symbol"] for h in state["history"]}
-        new_pairs = [p for p in pairs[:3] if p["symbol"] not in today_symbols]
-        if not new_pairs:
-            log.info("All top pairs already signaled today, skipping")
-            return
-
         # Add to history
-        for p in new_pairs:
-            state["signals"] = [{"rank": i+1, **p2, "scan_time": scan_time} for i, p2 in enumerate(new_pairs)]
+        for p in pairs[:3]:
             state["history"].append({
                 "symbol": p["symbol"],
                 "scan_time": scan_time,
@@ -396,20 +355,220 @@ import atexit
 _startup_thread = threading.Thread(target=_startup, daemon=True)
 _startup_thread.start()
 
-DASHBOARD = open("panel.html").read() if __import__("os").path.exists("panel.html") else "<h1>Panel loading...</h1>"
+DASHBOARD = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>JARVIS ANALYST</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max-width:430px;margin:0 auto;padding-bottom:70px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fade{animation:fadeIn 0.4s ease}
+.header{position:sticky;top:0;z-index:10;background:#080b0f;border-bottom:1px solid #0d1117;padding:14px 14px 10px}
+.row{display:flex;justify-content:space-between;align-items:flex-start}
+.title{font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:#fff;letter-spacing:2px}
+.sub{font-size:9px;color:#30363d;letter-spacing:2px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;animation:pulse 1.5s infinite}
+.stats{display:flex;gap:6px;margin-top:10px}
+.stat{flex:1;background:#0d1117;border:1px solid #161b22;border-radius:8px;padding:6px 8px;text-align:center}
+.stat-v{font-size:13px;font-weight:700;color:#fff}
+.stat-l{font-size:8px;color:#30363d;letter-spacing:1px}
+.tabs{display:flex;border-bottom:1px solid #161b22;margin:0 14px}
+.tab{flex:1;text-align:center;padding:10px 0;font-size:10px;letter-spacing:1px;color:#30363d;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s}
+.tab.active{color:#00e676;border-bottom-color:#00e676}
+.body{padding:12px}
+.card{background:#0d1117;border:1px solid #00e67622;border-radius:14px;padding:14px 16px;margin-bottom:12px}
+.card-time{font-size:10px;color:#30363d;margin-bottom:10px}
+.sig{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #161b22}
+.sig:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.sig-title{font-size:13px;font-weight:700;color:#00e676;margin-bottom:6px}
+.sig-row{display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px}
+.sig-label{color:#455a64}
+.sig-reason{font-size:10px;color:#546e7a;margin-top:6px;line-height:1.5;padding-top:6px;border-top:1px solid #161b22}
+.badge{font-size:9px;padding:2px 5px;border-radius:4px;font-weight:700}
+.badge-bull{background:#00e67222;color:#00e672}
+.badge-bear{background:#ff174422;color:#ff1744}
+.badge-neu{background:#58a6ff22;color:#58a6ff}
+.hist-item{background:#0d1117;border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #161b22}
+.hist-item.win{border-left-color:#00e676}
+.hist-item.loss{border-left-color:#ff1744}
+.hist-item.active{border-left-color:#ffea00}
+.hist-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.hist-sym{font-size:12px;font-weight:700;color:#eceff1}
+.hist-time{font-size:9px;color:#30363d}
+.hist-bars{margin-top:6px}
+.bar-row{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.bar-label{font-size:9px;color:#455a64;width:28px}
+.bar-track{flex:1;height:4px;background:#161b22;border-radius:2px;overflow:hidden}
+.bar-fill{height:100%;border-radius:2px;transition:width 0.3s}
+.bar-val{font-size:9px;width:45px;text-align:right}
+.pct-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px}
+.empty{background:#0d1117;border:1px solid #161b22;border-radius:14px;padding:30px 20px;text-align:center}
+.footer{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#080b0f;border-top:1px solid #0d1117;padding:8px;text-align:center;font-size:9px;color:#21262d}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="row">
+    <div><div class="title">JARVIS</div><div class="sub">ANALYST v2 · RSI · MACD · OKX</div></div>
+    <div>
+      <div><span class="dot" id="dot" style="background:#ffea00"></span><span id="st" style="font-size:10px;color:#ffea00">LOADING</span></div>
+      <div id="tmr" style="font-size:10px;color:#30363d;margin-top:2px;text-align:right"></div>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-v" id="sc">0</div><div class="stat-l">СКАНОВ</div></div>
+    <div class="stat"><div class="stat-v" id="hc">0</div><div class="stat-l">СИГНАЛОВ</div></div>
+    <div class="stat"><div class="stat-v" id="wc" style="color:#00e676">0</div><div class="stat-l">ПОБЕД</div></div>
+    <div class="stat"><div class="stat-v" id="lc" style="color:#ff1744">0</div><div class="stat-l">ПОТЕРЬ</div></div>
+  </div>
+</div>
+<div class="tabs">
+  <div class="tab active" id="tab-signals" onclick="switchTab('signals')">СИГНАЛЫ</div>
+  <div class="tab" id="tab-history" onclick="switchTab('history')">ИСТОРИЯ ДНЯ</div>
+</div>
+<div class="body" id="body-signals">
+  <div class="empty"><div style="font-size:24px;margin-bottom:10px">⏳</div><div style="font-size:11px;color:#30363d">ЗАГРУЗКА...</div></div>
+</div>
+<div class="body" id="body-history" style="display:none">
+  <div class="empty"><div style="font-size:24px;margin-bottom:10px">📋</div><div style="font-size:11px;color:#30363d">ИСТОРИЯ ПОЯВИТСЯ ПОСЛЕ ПЕРВОГО СИГНАЛА</div></div>
+</div>
+<div class="footer">⚠️ НЕ ЯВЛЯЕТСЯ ФИНАНСОВЫМ СОВЕТОМ · ТОРГУЙ НА СВОЙ РИСК</div>
+<script>
+let currentTab = 'signals';
+let prevSig = null;
+let data = {};
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tab-signals').className = 'tab' + (tab==='signals'?' active':'');
+  document.getElementById('tab-history').className = 'tab' + (tab==='history'?' active':'');
+  document.getElementById('body-signals').style.display = tab==='signals' ? 'block' : 'none';
+  document.getElementById('body-history').style.display = tab==='history' ? 'block' : 'none';
+}
+
+function macdBadge(m) {
+  if (!m) return '';
+  if (m.includes('bullish')) return '<span class="badge badge-bull">BULL</span>';
+  if (m.includes('bearish')) return '<span class="badge badge-bear">BEAR</span>';
+  if (m.includes('crossing_up')) return '<span class="badge badge-bull">↑</span>';
+  return '<span class="badge badge-neu">↓</span>';
+}
+
+function rsiColor(r) {
+  if (r >= 70) return '#ff5252';
+  if (r <= 30) return '#69f0ae';
+  if (r >= 45 && r <= 65) return '#00e676';
+  return '#58a6ff';
+}
+
+function renderSignals(d) {
+  const sigs = d.signals || [];
+  if (!sigs.length) {
+    document.getElementById('body-signals').innerHTML='<div class="empty"><div style="font-size:24px;margin-bottom:10px">⏳</div><div style="font-size:11px;color:#30363d;letter-spacing:1px">ОЖИДАНИЕ СИГНАЛА</div><div style="font-size:10px;color:#21262d;margin-top:6px">Бот сканирует каждые 15 минут</div></div>';
+    return;
+  }
+  const changed = JSON.stringify(sigs) !== prevSig;
+  prevSig = JSON.stringify(sigs);
+  document.getElementById('body-signals').innerHTML = '<div class="card '+(changed?'fade':'')+'"><div class="card-time">🤖 JARVIS ANALYST v2 · '+(d.last_scan||'')+'</div>'+
+  sigs.map(s => {
+    const sym = s.symbol.replace('-USDT','');
+    const e=s.entry||0,sl=s.stop_loss||0,tp=s.take_profit||0;
+    const rr=Math.abs(sl&&e?(tp-e)/(e-sl):0);
+    return '<div class="sig"><div class="sig-title">🟢 #'+s.rank+' '+sym+'/USDT · Score '+s.score+'</div>'+
+    '<div class="sig-row"><span class="sig-label">💰 Вход</span><span style="font-weight:700;color:#fff">'+e+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">🛑 SL</span><span style="color:#ff5252;font-weight:700">'+sl+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">🎯 TP</span><span style="color:#69f0ae;font-weight:700">'+tp+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📊 RR</span><span style="color:#58a6ff">1:'+rr.toFixed(1)+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📈 RSI 15m</span><span style="color:'+rsiColor(s.rsi||50)+'">'+( s.rsi||'—')+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📊 RSI 1H</span><span style="color:'+rsiColor(s.rsi_1h||50)+'">'+(s.rsi_1h||'—')+'</span></div>'+
+    '<div class="sig-row"><span class="sig-label">📉 MACD</span>'+macdBadge(s.macd)+'</div>'+
+    '<div class="sig-row"><span class="sig-label">🕐 1H</span><span style="color:'+(s.htf_bullish?'#00e676':'#ff5252')+'">'+(s.htf_bullish?'✅ ПОДТВЕРЖДЁН':'⚠️ НЕТ')+'</span></div>'+
+    '<div class="sig-reason">💬 '+(s.reason||'')+'</div></div>';
+  }).join('')+'</div>';
+}
+
+function renderHistory(d) {
+  const hist = (d.history || []).slice().reverse();
+  if (!hist.length) {
+    document.getElementById('body-history').innerHTML='<div class="empty"><div style="font-size:24px;margin-bottom:10px">📋</div><div style="font-size:11px;color:#30363d">ИСТОРИЯ ПОЯВИТСЯ ПОСЛЕ ПЕРВОГО СИГНАЛА</div></div>';
+    return;
+  }
+  let wins=0,losses=0;
+  hist.forEach(h=>{ if(h.result==='WIN') wins++; if(h.result==='LOSS') losses++; });
+  document.getElementById('wc').textContent=wins;
+  document.getElementById('lc').textContent=losses;
+  document.getElementById('hc').textContent=hist.length;
+
+  document.getElementById('body-history').innerHTML = hist.map(h => {
+    const sym = h.symbol.replace('-USDT','');
+    const pct = h.pct_change || 0;
+    const status = h.status;
+    const cls = status==='tp_hit'?'win':status==='sl_hit'?'loss':'active';
+    const pctColor = pct > 0 ? '#00e676' : pct < 0 ? '#ff1744' : '#58a6ff';
+    const statusLabel = status==='tp_hit'?'✅ TP HIT':status==='sl_hit'?'❌ SL HIT':'🔵 ACTIVE';
+
+    // Progress bars for entry, current, sl, tp
+    const range = h.take_profit - h.stop_loss;
+    const slPct = range > 0 ? 0 : 0;
+    const tpPct = 100;
+    const entryPct = range > 0 ? ((h.entry - h.stop_loss) / range * 100) : 50;
+    const currPct = range > 0 ? Math.max(0,Math.min(100,(h.current_price - h.stop_loss) / range * 100)) : 50;
+
+    return '<div class="hist-item '+cls+'">'+
+      '<div class="hist-header">'+
+        '<span class="hist-sym">'+sym+'/USDT</span>'+
+        '<span class="hist-time">'+h.scan_time+'</span>'+
+      '</div>'+
+      '<div class="sig-row">'+
+        '<span style="font-size:10px;color:#455a64">'+statusLabel+'</span>'+
+        '<span class="pct-badge" style="background:'+pctColor+'22;color:'+pctColor+'">'+(pct>=0?'+':'')+pct.toFixed(2)+'%</span>'+
+      '</div>'+
+      '<div class="hist-bars">'+
+        '<div class="bar-row"><span class="bar-label" style="color:#455a64">SL</span><div class="bar-track"><div class="bar-fill" style="width:0%;background:#ff1744"></div></div><span class="bar-val" style="color:#ff5252;font-size:9px">'+h.stop_loss+'</span></div>'+
+        '<div class="bar-row"><span class="bar-label" style="color:#ffea00">NOW</span><div class="bar-track"><div class="bar-fill" style="width:'+currPct.toFixed(0)+'%;background:'+(pct>=0?'#00e676':'#ff1744')+'"></div></div><span class="bar-val" style="color:#fff;font-size:9px">'+h.current_price+'</span></div>'+
+        '<div class="bar-row"><span class="bar-label" style="color:#69f0ae">TP</span><div class="bar-track"><div class="bar-fill" style="width:100%;background:#00e67633"></div></div><span class="bar-val" style="color:#69f0ae;font-size:9px">'+h.take_profit+'</span></div>'+
+      '</div>'+
+      '<div style="font-size:9px;color:#30363d;margin-top:4px">Вход: '+h.entry+' · RSI: '+h.rsi+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+function updateTimer(n) {
+  if (!n) return;
+  const d = Math.max(0, Math.floor(n - Date.now()/1000));
+  document.getElementById('tmr').textContent = d>0 ? 'след: '+Math.floor(d/60)+':'+String(d%60).padStart(2,'0') : 'сканирование...';
+}
+
+async function fetchData() {
+  try {
+    const res = await fetch('/signals');
+    data = await res.json();
+    document.getElementById('sc').textContent = data.scan_count || 0;
+    const dot = document.getElementById('dot');
+    const st = document.getElementById('st');
+    if ((data.signals||[]).length > 0) { dot.style.background='#00e676'; st.style.color='#00e676'; st.textContent='LIVE'; }
+    else { dot.style.background='#ffea00'; st.style.color='#ffea00'; st.textContent='WAITING'; }
+    renderSignals(data);
+    renderHistory(data);
+    setInterval(()=>updateTimer(data.next_scan), 1000);
+  } catch(e) { document.getElementById('st').textContent='ERROR'; }
+}
+
+fetchData();
+setInterval(fetchData, 15000);
+</script>
+</body>
+</html>"""
 
 @app.route("/")
 def dashboard():
-    try:
-        html = open("panel.html").read()
-    except:
-        html = DASHBOARD
-    return Response(html, mimetype="text/html")
-
-@app.route("/v2")
-def dashboard_v2():
-    html = open("/app/panel.html").read() if __import__("os").path.exists("/app/panel.html") else "<h1>Panel not found</h1>"
-    return Response(html, mimetype="text/html")
+    return Response(DASHBOARD, mimetype="text/html")
 
 @app.route("/signals")
 def signals():
