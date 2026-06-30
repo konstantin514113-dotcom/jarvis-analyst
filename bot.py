@@ -7,8 +7,8 @@ ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT  = os.environ["TELEGRAM_CHAT_ID"]
 INTERVAL_MIN   = int(os.environ.get("INTERVAL_MIN", "20"))
-SESSION_START  = int(os.environ.get("SESSION_START_UTC", "10"))
-SESSION_END    = int(os.environ.get("SESSION_END_UTC", "18"))
+SESSION_START  = int(os.environ.get("SESSION_START_UTC", "13"))
+SESSION_END    = int(os.environ.get("SESSION_END_UTC", "17"))
 SIGNAL_HOUR    = int(os.environ.get("SIGNAL_HOUR_UTC", "13"))
 OKX_BASE       = "https://www.okx.com"
 
