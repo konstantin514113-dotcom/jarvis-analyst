@@ -7,8 +7,8 @@ ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT  = os.environ["TELEGRAM_CHAT_ID"]
 INTERVAL_MIN   = int(os.environ.get("INTERVAL_MIN", "20"))
-SESSION_START  = int(os.environ.get("SESSION_START_UTC", "13"))
-SESSION_END    = int(os.environ.get("SESSION_END_UTC", "17"))
+SESSION_START  = int(os.environ.get("SESSION_START_UTC", "10"))
+SESSION_END    = int(os.environ.get("SESSION_END_UTC", "13"))
 SIGNAL_HOUR    = int(os.environ.get("SIGNAL_HOUR_UTC", "13"))
 OKX_BASE       = "https://www.okx.com"
 
@@ -45,7 +45,7 @@ def tg(msg):
 
 def load_pairs():
     global PAIRS
-    MAX_PAIRS = 100
+    MAX_PAIRS = 300
     base = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT",
             "AVAX-USDT","LINK-USDT","DOT-USDT","SUI-USDT","APT-USDT","ARB-USDT","OP-USDT",
             "PEPE-USDT","SHIB-USDT","WIF-USDT","BONK-USDT","ORDI-USDT","INJ-USDT","TIA-USDT",
