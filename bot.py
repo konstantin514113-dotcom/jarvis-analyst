@@ -9,7 +9,8 @@ TELEGRAM_CHAT  = os.environ["TELEGRAM_CHAT_ID"]
 INTERVAL_MIN   = int(os.environ.get("INTERVAL_MIN", "20"))
 SESSION_START  = int(os.environ.get("SESSION_START_UTC", "10"))
 SESSION_END    = int(os.environ.get("SESSION_END_UTC", "13"))
-SIGNAL_HOUR    = int(os.environ.get("SIGNAL_HOUR_UTC", "13"))
+SIGNAL_HOUR    = int(os.environ.get("SIGNAL_HOUR_UTC", "12"))
+SIGNAL_MINUTE  = int(os.environ.get("SIGNAL_MINUTE_UTC", "50"))
 OKX_BASE       = "https://www.okx.com"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -258,7 +259,8 @@ def run_cycle():
         state["daily_sent"] = False; state["status"] = "ready"
         log.info("Daily reset")
     # Check signal time FIRST, before session bounds (signal hour may equal session end)
-    if now.hour >= SIGNAL_HOUR and not state["daily_sent"] and state["accumulated"]:
+    signal_time_reached = (now.hour > SIGNAL_HOUR) or (now.hour == SIGNAL_HOUR and now.minute >= SIGNAL_MINUTE)
+    if signal_time_reached and not state["daily_sent"] and state["accumulated"]:
         send_top5(now); state["daily_sent"] = True; return
     if state["daily_sent"]: return
     if not (SESSION_START <= now.hour < SESSION_END):
