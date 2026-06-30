@@ -318,6 +318,55 @@ def dashboard():
 def signals():
     return jsonify(state)
 
+@app.route("/force-scan")
+def force_scan():
+    def do_force():
+        try:
+            state["status"] = "force_scanning"
+            log.info("FORCE SCAN triggered manually")
+            candidates = scan()
+            log.info(f"Force scan found {len(candidates)} candidates")
+            if not candidates:
+                state["status"] = "force_scan_no_candidates"
+                return
+            result = analyze_with_claude(candidates)
+            pairs = result.get("top_pairs", [])[:5]
+            if not pairs:
+                state["status"] = "force_scan_no_pairs"
+                return
+            for p in pairs:
+                e = p.get("entry", 0)
+                if e > 0:
+                    p["stop_loss"] = round(e * 0.985, 8)
+                    p["take_profit"] = round(e * 1.035, 8)
+            now = datetime.now(timezone.utc)
+            scan_time = now.strftime("%H:%M UTC")
+            state["signals"] = [{"rank": i+1, **p, "scan_time": scan_time} for i, p in enumerate(pairs)]
+            state["last_scan"] = scan_time
+            today_syms = {h["symbol"] for h in state["history"]}
+            for p in pairs:
+                if p["symbol"] not in today_syms:
+                    state["history"].append({"symbol": p["symbol"], "scan_time": scan_time,
+                        "entry": p.get("entry",0), "stop_loss": p.get("stop_loss",0), "take_profit": p.get("take_profit",0),
+                        "score": p.get("score",0), "rsi": p.get("rsi",0), "macd": p.get("macd",""),
+                        "reason": p.get("reason",""), "current_price": p.get("entry",0), "pct_change": 0.0,
+                        "status": "active", "result": None})
+            msgs = []
+            for i, p in enumerate(pairs):
+                sym = p["symbol"].replace("-USDT","")
+                e=p.get("entry",0); sl=p.get("stop_loss",0); tp=p.get("take_profit",0)
+                rr = abs((tp-e)/(e-sl)) if abs(e-sl)>0 else 0
+                msgs.append(f"#{i+1} {sym}/USDT\nВход: {e} | SL: {sl} | TP: {tp}\nRR: 1:{rr:.1f} | Score: {p.get('score',0)}\nRSI: {p.get('rsi','?')} | 1H: {p.get('rsi_1h','?')}\n{p.get('reason','')}")
+            header = f"JARVIS FORCE SIGNAL | {scan_time}\n" + "-"*16 + "\n"
+            tg(header + "\n\n".join(msgs) + "\n\n" + "-"*16 + "\nНе финансовый совет.")
+            state["status"] = "force_scan_sent"
+            log.info(f"Force scan sent: {[p['symbol'] for p in pairs]}")
+        except Exception as e:
+            log.error(f"Force scan error: {e}", exc_info=True)
+            state["status"] = "force_scan_error"
+    threading.Thread(target=do_force, daemon=True).start()
+    return jsonify({"ok": True, "message": "Force scan started, check /status in 2-3 minutes"})
+
 @app.route("/status")
 def status():
     return jsonify({"status":state["status"],"pairs":state["pairs_loaded"],
