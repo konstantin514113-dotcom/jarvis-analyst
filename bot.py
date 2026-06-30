@@ -163,7 +163,7 @@ def scan():
     return candidates[:25]
 
 def analyze_with_claude(candidates):
-    client = Anthropic(api_key=ANTHROPIC_KEY)
+    client = Anthropic(api_key=ANTHROPIC_KEY, timeout=30.0)
     lines = [f"Market {datetime.utcnow().strftime('%H:%M UTC')}:"]
     for c in candidates:
         lines.append(f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} RSI15m={c['rsi']} RSI1H={c['rsi_1h']} MACD15m={c['macd']} MACD1H={c['macd_1h']} htf_confirmed=YES above_MA20={'YES' if c['above_ma20'] else 'NO'} dist_high={c['dist_from_high']:.1f}% score={c['score']}")
@@ -219,7 +219,18 @@ def send_top5(now):
     tg(header + "\n\n".join(msgs) + "\n\n" + "-"*16 + "\nНе финансовый совет.")
     log.info(f"Sent top-5: {[p['symbol'] for p in top5]}")
 
+_cycle_lock = threading.Lock()
+
 def run_cycle():
+    if not _cycle_lock.acquire(blocking=False):
+        log.warning("Previous cycle still running, skipping this tick")
+        return
+    try:
+        _run_cycle_inner()
+    finally:
+        _cycle_lock.release()
+
+def _run_cycle_inner():
     now = datetime.now(timezone.utc)
     if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
         state["history"] = []
@@ -287,12 +298,15 @@ def price_monitor():
 def main():
     log.info("JARVIS ANALYST v3 starting...")
     load_pairs()
-    tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Сигнал в 13:00 UTC\nКаждые {INTERVAL_MIN} мин")
+    tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Каждые {INTERVAL_MIN} мин")
     time.sleep(10)
     threading.Thread(target=price_monitor, daemon=True).start()
     while True:
-        try: run_cycle()
-        except Exception as e: log.error(f"Main error: {e}")
+        t = threading.Thread(target=run_cycle, daemon=True)
+        t.start()
+        t.join(timeout=480)  # hard 8-min cap per cycle, never blocks main loop
+        if t.is_alive():
+            log.error("Cycle thread still alive after 8 min, abandoning it and continuing")
         time.sleep(INTERVAL_MIN*60)
 
 app = Flask(__name__)
