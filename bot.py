@@ -159,14 +159,21 @@ def scan():
     return candidates[:25]
 
 def analyze_with_claude(candidates):
-    client = Anthropic(api_key=ANTHROPIC_KEY)
+    client = Anthropic(api_key=ANTHROPIC_KEY, timeout=30.0)
     lines = [f"Market {datetime.utcnow().strftime('%H:%M UTC')}:"]
     for c in candidates:
         lines.append(f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} RSI15m={c['rsi']} RSI1H={c['rsi_1h']} MACD15m={c['macd']} MACD1H={c['macd_1h']} htf_confirmed=YES above_MA20={'YES' if c['above_ma20'] else 'NO'} dist_high={c['dist_from_high']:.1f}% score={c['score']}")
     msg = client.messages.create(model="claude-sonnet-4-6", max_tokens=1500,
         system=SCREEN_PROMPT, messages=[{"role":"user","content":"\n".join(lines)}])
     text = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
-    return json.loads(text)
+    # Robust parse: extract only the first valid JSON object, ignore any trailing text
+    decoder = json.JSONDecoder()
+    try:
+        obj, _ = decoder.raw_decode(text)
+        return obj
+    except json.JSONDecodeError as e:
+        log.error(f"JSON parse failed even with raw_decode: {e}. Raw text: {text[:300]}")
+        return {"top_pairs": []}
 
 def update_history():
     for h in state["history"]:
