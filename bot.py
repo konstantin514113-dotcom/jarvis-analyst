@@ -74,7 +74,7 @@ def load_pairs():
 
 def get_ticker(symbol):
     try:
-        r = requests.get(f"{OKX_BASE}/api/v5/market/ticker?instId={symbol}", timeout=5)
+        r = requests.get(f"{OKX_BASE}/api/v5/market/ticker?instId={symbol}", timeout=3)
         t = r.json().get("data",[{}])[0]
         if not t: return None
         last = float(t.get("last",0))
@@ -86,7 +86,7 @@ def get_ticker(symbol):
 
 def get_candles(symbol, bar="15m", limit=30):
     try:
-        r = requests.get(f"{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}", timeout=5)
+        r = requests.get(f"{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}", timeout=3)
         data = r.json().get("data",[])
         if not data: return None
         return [{"c":float(c[4]),"v":float(c[5])} for c in reversed(data)]
@@ -147,13 +147,19 @@ def analyze_pair(symbol):
 
 def scan():
     candidates = []
-    for symbol in PAIRS:
+    start = time.time()
+    for i, symbol in enumerate(PAIRS):
+        if time.time() - start > 300:  # hard 5-min cap on scan
+            log.warning(f"Scan timeout reached at pair {i}/{len(PAIRS)}, stopping early")
+            break
         try:
             d = analyze_pair(symbol)
             if d: candidates.append(d)
-            time.sleep(0.1)
         except: pass
+        if i % 50 == 0:
+            log.info(f"Scan progress: {i}/{len(PAIRS)}")
     candidates.sort(key=lambda x: x["score"], reverse=True)
+    log.info(f"Scan done in {time.time()-start:.0f}s, {len(candidates)} candidates")
     return candidates[:25]
 
 def analyze_with_claude(candidates):
