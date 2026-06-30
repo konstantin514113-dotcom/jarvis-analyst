@@ -29,6 +29,8 @@ state = {
     "demo_positions": [],   # active + closed paper trades
     "demo_balance": 10000.0,
     "demo_id_counter": 0,
+    "demo_journal": [],      # full trade history log for analysis
+    "demo_pending_reinvest": 0.0,  # accumulated daily PnL not yet reinvested
 }
 
 PAIRS = []
@@ -193,6 +195,28 @@ def update_history():
             except: pass
     update_demo_positions()
 
+def log_journal_entry(p):
+    """Append a closed position to the permanent journal for later analysis."""
+    state["demo_journal"].append({
+        "id": p["id"],
+        "symbol": p["symbol"],
+        "direction": p["direction"],
+        "entry": p["entry"],
+        "close_price": p.get("close_price"),
+        "stop_loss": p["stop_loss"],
+        "take_profit": p["take_profit"],
+        "leverage": p["leverage"],
+        "size": p["size"],
+        "pnl_pct": p.get("pnl_pct", 0),
+        "pnl_usd": p.get("pnl_usd", 0),
+        "result": p.get("result"),
+        "score": p.get("score"),
+        "opened_at": p.get("opened_at"),
+        "closed_at": p.get("closed_at"),
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    })
+    state["demo_pending_reinvest"] += p.get("pnl_usd", 0)
+
 def update_demo_positions():
     for p in state["demo_positions"]:
         if p["status"] != "open": continue
@@ -216,6 +240,7 @@ def update_demo_positions():
                 p["close_price"] = price
                 p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
                 state["demo_balance"] += p["pnl_usd"]
+                log_journal_entry(p)
         except: pass
 
 def send_top5(now):
@@ -437,6 +462,7 @@ def demo_close():
                 p["close_price"] = price
                 p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
                 state["demo_balance"] += p["pnl_usd"]
+                log_journal_entry(p)
                 return jsonify({"ok": True, "position": p})
         return jsonify({"ok": False, "error": "Position not found or already closed"}), 404
     except Exception as e:
@@ -462,15 +488,66 @@ def demo_close_all():
                 p["close_price"] = price
                 p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
                 state["demo_balance"] += p["pnl_usd"]
+                log_journal_entry(p)
                 closed.append(p)
             except: pass
     return jsonify({"ok": True, "closed": closed, "balance": state["demo_balance"]})
 
+@app.route("/demo/reinvest", methods=["POST"])
+def demo_reinvest():
+    """Fold pending realized PnL into the working balance and clear the pending counter."""
+    amount = state["demo_pending_reinvest"]
+    state["demo_pending_reinvest"] = 0.0
+    return jsonify({"ok": True, "reinvested": round(amount, 2), "balance": round(state["demo_balance"], 2)})
+
 @app.route("/demo/state")
 def demo_state():
+    open_positions = [p for p in state["demo_positions"] if p["status"] == "open"]
+    n_open = len(open_positions)
+    suggested_size = round(state["demo_balance"] / 5, 2) if n_open == 0 else round(state["demo_balance"] / max(n_open, 1), 2)
     return jsonify({
         "balance": round(state["demo_balance"], 2),
         "positions": state["demo_positions"],
+        "pending_reinvest": round(state["demo_pending_reinvest"], 2),
+        "suggested_size": suggested_size,
+    })
+
+@app.route("/demo/journal")
+def demo_journal():
+    return jsonify({"journal": state["demo_journal"]})
+
+@app.route("/demo/stats")
+def demo_stats():
+    j = state["demo_journal"]
+    if not j:
+        return jsonify({"trades": 0})
+    wins = [t for t in j if t["result"] == "WIN"]
+    losses = [t for t in j if t["result"] == "LOSS"]
+    total_pnl = sum(t["pnl_usd"] for t in j)
+    by_symbol = {}
+    for t in j:
+        s = t["symbol"]
+        by_symbol.setdefault(s, {"trades": 0, "wins": 0, "pnl": 0.0})
+        by_symbol[s]["trades"] += 1
+        by_symbol[s]["wins"] += 1 if t["result"] == "WIN" else 0
+        by_symbol[s]["pnl"] += t["pnl_usd"]
+    by_date = {}
+    for t in j:
+        d = t["date"]
+        by_date.setdefault(d, {"trades": 0, "wins": 0, "pnl": 0.0})
+        by_date[d]["trades"] += 1
+        by_date[d]["wins"] += 1 if t["result"] == "WIN" else 0
+        by_date[d]["pnl"] += t["pnl_usd"]
+    return jsonify({
+        "trades": len(j),
+        "wins": len(wins),
+        "losses": len(losses),
+        "winrate": round(len(wins) / len(j) * 100, 1) if j else 0,
+        "total_pnl": round(total_pnl, 2),
+        "avg_win": round(sum(t["pnl_usd"] for t in wins) / len(wins), 2) if wins else 0,
+        "avg_loss": round(sum(t["pnl_usd"] for t in losses) / len(losses), 2) if losses else 0,
+        "by_symbol": by_symbol,
+        "by_date": by_date,
     })
 
 threading.Thread(target=lambda: main(), daemon=True).start()
