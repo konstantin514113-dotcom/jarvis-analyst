@@ -257,11 +257,12 @@ def run_cycle():
         state["history"] = []; state["accumulated"] = {}
         state["daily_sent"] = False; state["status"] = "ready"
         log.info("Daily reset")
-    if not (SESSION_START <= now.hour < SESSION_END):
-        state["status"] = "outside_session"; return
+    # Check signal time FIRST, before session bounds (signal hour may equal session end)
     if now.hour >= SIGNAL_HOUR and not state["daily_sent"] and state["accumulated"]:
         send_top5(now); state["daily_sent"] = True; return
     if state["daily_sent"]: return
+    if not (SESSION_START <= now.hour < SESSION_END):
+        state["status"] = "outside_session"; return
     state["status"] = "scanning"
     log.info(f"Scanning {len(PAIRS)} pairs...")
     try:
