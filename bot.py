@@ -45,6 +45,7 @@ def tg(msg):
 
 def load_pairs():
     global PAIRS
+    MAX_PAIRS = 150
     base = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT",
             "AVAX-USDT","LINK-USDT","DOT-USDT","SUI-USDT","APT-USDT","ARB-USDT","OP-USDT",
             "PEPE-USDT","SHIB-USDT","WIF-USDT","BONK-USDT","ORDI-USDT","INJ-USDT","TIA-USDT",
@@ -69,8 +70,9 @@ def load_pairs():
         PAIRS = list(dict.fromkeys(PAIRS + extra))
     except:
         pass
+    PAIRS = PAIRS[:MAX_PAIRS]
     state["pairs_loaded"] = len(PAIRS)
-    log.info(f"Loaded {len(PAIRS)} pairs")
+    log.info(f"Loaded {len(PAIRS)} pairs (capped at {MAX_PAIRS})")
 
 def get_ticker(symbol):
     try:
