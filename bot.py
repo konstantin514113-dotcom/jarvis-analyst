@@ -31,6 +31,7 @@ state = {
     "demo_id_counter": 0,
     "demo_journal": [],      # full trade history log for analysis
     "demo_pending_reinvest": 0.0,  # accumulated daily PnL not yet reinvested
+    "last_session_snapshot": None,  # snapshot of journal+balance at last daily reset
 }
 
 PAIRS = []
@@ -280,6 +281,14 @@ def send_top5(now):
 def run_cycle():
     now = datetime.now(timezone.utc)
     if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
+        if state["history"]:
+            today_journal = [t for t in state["demo_journal"] if t.get("date") == datetime.now(timezone.utc).strftime("%Y-%m-%d")]
+            state["last_session_snapshot"] = {
+                "signals": state["history"],
+                "trades": today_journal,
+                "balance_at_reset": round(state["demo_balance"], 2),
+                "timestamp": now.strftime("%Y-%m-%d %H:%M UTC"),
+            }
         state["history"] = []; state["accumulated"] = {}
         state["daily_sent"] = False; state["status"] = "ready"
         log.info("Daily reset")
@@ -515,6 +524,10 @@ def demo_state():
 @app.route("/demo/journal")
 def demo_journal():
     return jsonify({"journal": state["demo_journal"]})
+
+@app.route("/last-session")
+def last_session():
+    return jsonify(state["last_session_snapshot"] or {"message": "No previous session recorded yet"})
 
 @app.route("/demo/stats")
 def demo_stats():
