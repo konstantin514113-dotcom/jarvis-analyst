@@ -157,14 +157,14 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 
 <div class="day-result">
   <div class="day-row">
-    <div class="day-label">ИТОГ ДНЯ</div>
+    <div class="day-label">ИТОГ СЕССИИ</div>
     <div class="day-vals">
       <div class="day-money" id="day-money" style="color:#30363d">$0.00</div>
       <div class="day-pct" id="day-pct" style="color:#30363d">0.00%</div>
     </div>
   </div>
-  <button class="btn-reinvest" id="reinvest-btn" onclick="reinvestDay()" disabled>↻ РЕИНВЕСТИРОВАТЬ ДЕНЬ</button>
-  <div class="size-hint" id="size-hint">Размер на пару: $2,000.00 (1/5 депозита)</div>
+  <div class="size-hint" style="margin-top:8px" id="size-hint">Размер на пару: $2,000.00 (1/5 депозита)</div>
+  <div class="size-hint" style="margin-top:2px;color:#30363d">Авто-реинвест при новом сигнале</div>
 </div>
 
 <div class="cards" id="cards">
@@ -335,14 +335,6 @@ async function closeAll(){
   }catch(e){}
 }
 
-async function reinvestDay(){
-  try{
-    const r = await fetch('/demo/reinvest', {method:'POST'});
-    const d = await r.json();
-    if(d.ok){ fetchDemoState(); }
-  }catch(e){}
-}
-
 function trade(sym){window.open('https://www.okx.com/trade-swap/'+sym.toLowerCase().replace('-usdt','')+'-usdt-swap','_blank')}
 
 function renderCards(sigs){
@@ -402,9 +394,6 @@ function renderPositions(positions, balance, pendingReinvest){
   dayMoneyEl.style.color = pendingReinvest >= 0 ? '#00e676' : (pendingReinvest < 0 ? '#ff5252' : '#30363d');
   dayPctEl.textContent = fmtPct(dayPct);
   dayPctEl.style.color = pendingReinvest >= 0 ? '#00e676' : (pendingReinvest < 0 ? '#ff5252' : '#30363d');
-
-  const reinvestBtn = document.getElementById('reinvest-btn');
-  reinvestBtn.disabled = (pendingReinvest === 0 || closed.length === 0);
 
   const openSection = document.getElementById('positions-section');
   const closeAllBtn = document.getElementById('close-all-btn');
