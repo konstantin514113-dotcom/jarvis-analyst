@@ -45,7 +45,6 @@ def tg(msg):
 
 def load_pairs():
     global PAIRS
-    MAX_PAIRS = 150
     base = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT",
             "AVAX-USDT","LINK-USDT","DOT-USDT","SUI-USDT","APT-USDT","ARB-USDT","OP-USDT",
             "PEPE-USDT","SHIB-USDT","WIF-USDT","BONK-USDT","ORDI-USDT","INJ-USDT","TIA-USDT",
@@ -70,13 +69,12 @@ def load_pairs():
         PAIRS = list(dict.fromkeys(PAIRS + extra))
     except:
         pass
-    PAIRS = PAIRS[:MAX_PAIRS]
     state["pairs_loaded"] = len(PAIRS)
-    log.info(f"Loaded {len(PAIRS)} pairs (capped at {MAX_PAIRS})")
+    log.info(f"Loaded {len(PAIRS)} pairs")
 
 def get_ticker(symbol):
     try:
-        r = requests.get(f"{OKX_BASE}/api/v5/market/ticker?instId={symbol}", timeout=3)
+        r = requests.get(f"{OKX_BASE}/api/v5/market/ticker?instId={symbol}", timeout=5)
         t = r.json().get("data",[{}])[0]
         if not t: return None
         last = float(t.get("last",0))
@@ -88,7 +86,7 @@ def get_ticker(symbol):
 
 def get_candles(symbol, bar="15m", limit=30):
     try:
-        r = requests.get(f"{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}", timeout=3)
+        r = requests.get(f"{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}", timeout=5)
         data = r.json().get("data",[])
         if not data: return None
         return [{"c":float(c[4]),"v":float(c[5])} for c in reversed(data)]
@@ -149,23 +147,17 @@ def analyze_pair(symbol):
 
 def scan():
     candidates = []
-    start = time.time()
-    for i, symbol in enumerate(PAIRS):
-        if time.time() - start > 300:  # hard 5-min cap on scan
-            log.warning(f"Scan timeout reached at pair {i}/{len(PAIRS)}, stopping early")
-            break
+    for symbol in PAIRS:
         try:
             d = analyze_pair(symbol)
             if d: candidates.append(d)
+            time.sleep(0.1)
         except: pass
-        if i % 50 == 0:
-            log.info(f"Scan progress: {i}/{len(PAIRS)}")
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    log.info(f"Scan done in {time.time()-start:.0f}s, {len(candidates)} candidates")
     return candidates[:25]
 
 def analyze_with_claude(candidates):
-    client = Anthropic(api_key=ANTHROPIC_KEY, timeout=30.0)
+    client = Anthropic(api_key=ANTHROPIC_KEY)
     lines = [f"Market {datetime.utcnow().strftime('%H:%M UTC')}:"]
     for c in candidates:
         lines.append(f"{c['symbol']}: price={c['price']:.8f} change={c['change24h']:+.2f}% vol={c['vol24h']:,.0f} RSI15m={c['rsi']} RSI1H={c['rsi_1h']} MACD15m={c['macd']} MACD1H={c['macd_1h']} htf_confirmed=YES above_MA20={'YES' if c['above_ma20'] else 'NO'} dist_high={c['dist_from_high']:.1f}% score={c['score']}")
@@ -221,24 +213,17 @@ def send_top5(now):
     tg(header + "\n\n".join(msgs) + "\n\n" + "-"*16 + "\nНе финансовый совет.")
     log.info(f"Sent top-5: {[p['symbol'] for p in top5]}")
 
-_cycle_lock = threading.Lock()
-
 def run_cycle():
-    if not _cycle_lock.acquire(blocking=False):
-        log.warning("Previous cycle still running, skipping this tick")
-        return
-    try:
-        _run_cycle_inner()
-    finally:
-        _cycle_lock.release()
-
-def _run_cycle_inner():
     now = datetime.now(timezone.utc)
     if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
-        state["history"] = []
+        state["history"] = []; state["accumulated"] = {}
+        state["daily_sent"] = False; state["status"] = "ready"
         log.info("Daily reset")
     if not (SESSION_START <= now.hour < SESSION_END):
         state["status"] = "outside_session"; return
+    if now.hour >= SIGNAL_HOUR and not state["daily_sent"] and state["accumulated"]:
+        send_top5(now); state["daily_sent"] = True; return
+    if state["daily_sent"]: return
     state["status"] = "scanning"
     log.info(f"Scanning {len(PAIRS)} pairs...")
     try:
@@ -249,44 +234,15 @@ def _run_cycle_inner():
             state["next_scan"] = now.timestamp() + INTERVAL_MIN*60
             state["status"] = "waiting"; return
         result = analyze_with_claude(candidates)
-        pairs = result.get("top_pairs",[])[:5]
-        if not pairs:
-            state["scan_count"] += 1
-            state["next_scan"] = now.timestamp() + INTERVAL_MIN*60
-            state["status"] = "waiting"; return
-
-        for p in pairs:
-            e = p.get("entry", 0)
-            if e > 0:
-                p["stop_loss"] = round(e * 0.985, 8)
-                p["take_profit"] = round(e * 1.035, 8)
-
-        scan_time = now.strftime("%H:%M UTC")
-        state["signals"] = [{"rank":i+1,**p,"scan_time":scan_time} for i,p in enumerate(pairs)]
-        state["last_scan"] = scan_time
+        for p in result.get("top_pairs",[])[:5]:
+            sym = p.get("symbol","")
+            if sym not in state["accumulated"]:
+                state["accumulated"][sym] = {"count":0,"data":p}
+            state["accumulated"][sym]["count"] += 1
+            state["accumulated"][sym]["data"] = p
+        log.info(f"Accumulated: {len(state['accumulated'])} pairs")
         state["scan_count"] += 1
         state["next_scan"] = now.timestamp() + INTERVAL_MIN*60
-
-        today_syms = {h["symbol"] for h in state["history"]}
-        new_pairs = [p for p in pairs if p["symbol"] not in today_syms]
-        for p in new_pairs:
-            state["history"].append({"symbol":p["symbol"],"scan_time":scan_time,
-                "entry":p.get("entry",0),"stop_loss":p.get("stop_loss",0),"take_profit":p.get("take_profit",0),
-                "score":p.get("score",0),"rsi":p.get("rsi",0),"macd":p.get("macd",""),
-                "reason":p.get("reason",""),"current_price":p.get("entry",0),"pct_change":0.0,
-                "status":"active","result":None})
-
-        if new_pairs:
-            msgs = []
-            for i, p in enumerate(pairs):
-                sym = p["symbol"].replace("-USDT","")
-                e=p.get("entry",0); sl=p.get("stop_loss",0); tp=p.get("take_profit",0)
-                rr = abs((tp-e)/(e-sl)) if abs(e-sl)>0 else 0
-                msgs.append(f"#{i+1} {sym}/USDT\nВход: {e} | SL: {sl} | TP: {tp}\nRR: 1:{rr:.1f} | Score: {p.get('score',0)}\nRSI: {p.get('rsi','?')} | 1H: {p.get('rsi_1h','?')}\n{p.get('reason','')}")
-            header = f"JARVIS SIGNAL | {scan_time}\n" + "-"*16 + "\n"
-            tg(header + "\n\n".join(msgs) + "\n\n" + "-"*16 + "\nНе финансовый совет.")
-            log.info(f"Sent signal: {[p['symbol'] for p in pairs]}")
-
         state["status"] = "waiting"
     except Exception as e:
         log.error(f"Cycle error: {e}", exc_info=True)
@@ -300,15 +256,12 @@ def price_monitor():
 def main():
     log.info("JARVIS ANALYST v3 starting...")
     load_pairs()
-    tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Каждые {INTERVAL_MIN} мин")
+    tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Сигнал в 13:00 UTC\nКаждые {INTERVAL_MIN} мин")
     time.sleep(10)
     threading.Thread(target=price_monitor, daemon=True).start()
     while True:
-        t = threading.Thread(target=run_cycle, daemon=True)
-        t.start()
-        t.join(timeout=480)  # hard 8-min cap per cycle, never blocks main loop
-        if t.is_alive():
-            log.error("Cycle thread still alive after 8 min, abandoning it and continuing")
+        try: run_cycle()
+        except Exception as e: log.error(f"Main error: {e}")
         time.sleep(INTERVAL_MIN*60)
 
 app = Flask(__name__)
