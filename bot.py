@@ -314,7 +314,34 @@ def update_demo_positions():
                 log_journal_entry(p)
         except: pass
 
+def start_new_session():
+    """Auto-reinvest pending PnL and force-close any still-open positions before starting a new 5-pair session."""
+    for p in state["demo_positions"]:
+        if p["status"] == "open":
+            try:
+                t = get_ticker(p["symbol"])
+                price = t["price"] if t else p["current_price"]
+                if p["direction"] == "LONG":
+                    pnl_pct = (price - p["entry"]) / p["entry"]
+                else:
+                    pnl_pct = (p["entry"] - price) / p["entry"]
+                pnl_pct *= p["leverage"]
+                p["pnl_pct"] = round(pnl_pct * 100, 2)
+                p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+                p["status"] = "closed"
+                p["result"] = "WIN" if p["pnl_usd"] >= 0 else "LOSS"
+                p["close_price"] = price
+                p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+                state["demo_balance"] += p["pnl_usd"]
+                log_journal_entry(p)
+            except Exception as e:
+                log.error(f"start_new_session close error: {e}")
+    state["demo_pending_reinvest"] = 0.0
+    state["demo_positions"] = [p for p in state["demo_positions"] if p["status"] == "open"]
+    log.info(f"New session started, balance reinvested: ${state['demo_balance']:.2f}")
+
 def send_top5(now):
+    start_new_session()
     if not state["accumulated"]: return
     sorted_pairs = sorted(state["accumulated"].values(), key=lambda x:(x["count"],x["data"].get("score",0)), reverse=True)
     top5 = [p["data"] for p in sorted_pairs[:5]]
@@ -454,6 +481,7 @@ def force_scan():
                     p["take_profit"] = round(e * 1.035, 8)
             now = datetime.now(timezone.utc)
             scan_time = now.strftime("%H:%M UTC")
+            start_new_session()
             state["signals"] = [{"rank": i+1, **p, "scan_time": scan_time} for i, p in enumerate(pairs)]
             state["last_scan"] = scan_time
             today_syms = {h["symbol"] for h in state["history"]}
