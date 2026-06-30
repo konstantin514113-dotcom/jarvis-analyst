@@ -147,7 +147,7 @@ def analyze_pair(symbol):
     score += 10 if above_ma else 0
     score += 10 if dist>1 else 0
     score += 20
-    if score < 89: return None
+    if score < 75: return None
     return {**t,"rsi":rsi15,"rsi_1h":rsi1h,"macd":macd15,"macd_1h":macd1h,
             "htf_bullish":True,"above_ma20":above_ma,"dist_from_high":round(dist,2),"score":round(score,1)}
 
@@ -323,11 +323,19 @@ def force_scan():
     def do_force():
         try:
             state["status"] = "force_scanning"
-            log.info("FORCE SCAN triggered manually")
-            candidates = scan()
-            log.info(f"Force scan found {len(candidates)} candidates")
+            log.info("FORCE SCAN triggered manually (will retry until candidates found, max 5 tries)")
+            candidates = []
+            for attempt in range(5):
+                log.info(f"Force scan attempt {attempt+1}/5")
+                candidates = scan()
+                log.info(f"Attempt {attempt+1}: found {len(candidates)} candidates")
+                if candidates:
+                    break
+                state["status"] = f"force_scan_retry_{attempt+1}"
+                time.sleep(60)
             if not candidates:
                 state["status"] = "force_scan_no_candidates"
+                log.info("Force scan exhausted all 5 attempts, no candidates found")
                 return
             result = analyze_with_claude(candidates)
             pairs = result.get("top_pairs", [])[:5]
