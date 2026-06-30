@@ -25,6 +25,9 @@ state = {
     "daily_sent": False,
     "pairs_loaded": 0,
     "status": "starting",
+    "demo_positions": [],   # active + closed paper trades
+    "demo_balance": 10000.0,
+    "demo_id_counter": 0,
 }
 
 PAIRS = []
@@ -187,6 +190,32 @@ def update_history():
                     if t["price"] >= h["take_profit"]: h["status"]="tp_hit"; h["result"]="WIN"
                     elif t["price"] <= h["stop_loss"]: h["status"]="sl_hit"; h["result"]="LOSS"
             except: pass
+    update_demo_positions()
+
+def update_demo_positions():
+    for p in state["demo_positions"]:
+        if p["status"] != "open": continue
+        try:
+            t = get_ticker(p["symbol"])
+            if not t: continue
+            price = t["price"]
+            p["current_price"] = price
+            if p["direction"] == "LONG":
+                pnl_pct = (price - p["entry"]) / p["entry"]
+            else:
+                pnl_pct = (p["entry"] - price) / p["entry"]
+            pnl_pct *= p["leverage"]
+            p["pnl_pct"] = round(pnl_pct * 100, 2)
+            p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+            hit_tp = (p["direction"]=="LONG" and price >= p["take_profit"]) or (p["direction"]=="SHORT" and price <= p["take_profit"])
+            hit_sl = (p["direction"]=="LONG" and price <= p["stop_loss"]) or (p["direction"]=="SHORT" and price >= p["stop_loss"])
+            if hit_tp or hit_sl:
+                p["status"] = "closed"
+                p["result"] = "WIN" if hit_tp else "LOSS"
+                p["close_price"] = price
+                p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+                state["demo_balance"] += p["pnl_usd"]
+        except: pass
 
 def send_top5(now):
     if not state["accumulated"]: return
@@ -291,6 +320,98 @@ def status():
     return jsonify({"status":state["status"],"pairs":state["pairs_loaded"],
                     "scans":state["scan_count"],"accumulated":len(state["accumulated"]),
                     "daily_sent":state["daily_sent"],"last_scan":state["last_scan"]})
+
+from flask import request
+
+@app.route("/demo/open", methods=["POST"])
+def demo_open():
+    try:
+        data = request.get_json(force=True)
+        symbol = data["symbol"]
+        direction = data.get("direction", "LONG")
+        entry = float(data["entry"])
+        stop_loss = float(data["stop_loss"])
+        take_profit = float(data["take_profit"])
+        leverage = float(data.get("leverage", 1.25))
+        size = float(data.get("size", 2000))
+        state["demo_id_counter"] += 1
+        pos = {
+            "id": state["demo_id_counter"],
+            "symbol": symbol,
+            "direction": direction,
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "leverage": leverage,
+            "size": size,
+            "current_price": entry,
+            "pnl_pct": 0.0,
+            "pnl_usd": 0.0,
+            "status": "open",
+            "result": None,
+            "opened_at": datetime.now(timezone.utc).strftime("%H:%M UTC"),
+        }
+        state["demo_positions"].append(pos)
+        return jsonify({"ok": True, "position": pos})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+@app.route("/demo/close", methods=["POST"])
+def demo_close():
+    try:
+        data = request.get_json(force=True)
+        pos_id = int(data["id"])
+        for p in state["demo_positions"]:
+            if p["id"] == pos_id and p["status"] == "open":
+                t = get_ticker(p["symbol"])
+                price = t["price"] if t else p["current_price"]
+                if p["direction"] == "LONG":
+                    pnl_pct = (price - p["entry"]) / p["entry"]
+                else:
+                    pnl_pct = (p["entry"] - price) / p["entry"]
+                pnl_pct *= p["leverage"]
+                p["pnl_pct"] = round(pnl_pct * 100, 2)
+                p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+                p["status"] = "closed"
+                p["result"] = "WIN" if p["pnl_usd"] >= 0 else "LOSS"
+                p["close_price"] = price
+                p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+                state["demo_balance"] += p["pnl_usd"]
+                return jsonify({"ok": True, "position": p})
+        return jsonify({"ok": False, "error": "Position not found or already closed"}), 404
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+@app.route("/demo/close_all", methods=["POST"])
+def demo_close_all():
+    closed = []
+    for p in state["demo_positions"]:
+        if p["status"] == "open":
+            try:
+                t = get_ticker(p["symbol"])
+                price = t["price"] if t else p["current_price"]
+                if p["direction"] == "LONG":
+                    pnl_pct = (price - p["entry"]) / p["entry"]
+                else:
+                    pnl_pct = (p["entry"] - price) / p["entry"]
+                pnl_pct *= p["leverage"]
+                p["pnl_pct"] = round(pnl_pct * 100, 2)
+                p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+                p["status"] = "closed"
+                p["result"] = "WIN" if p["pnl_usd"] >= 0 else "LOSS"
+                p["close_price"] = price
+                p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+                state["demo_balance"] += p["pnl_usd"]
+                closed.append(p)
+            except: pass
+    return jsonify({"ok": True, "closed": closed, "balance": state["demo_balance"]})
+
+@app.route("/demo/state")
+def demo_state():
+    return jsonify({
+        "balance": round(state["demo_balance"], 2),
+        "positions": state["demo_positions"],
+    })
 
 threading.Thread(target=lambda: main(), daemon=True).start()
 
