@@ -3,6 +3,72 @@ from datetime import datetime, timezone
 from anthropic import Anthropic
 from flask import Flask, Response, jsonify
 
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "konstantin514113-dotcom/jarvis-analyst")
+STATE_FILE_PATH = "demo_state.json"
+LOCAL_STATE_FILE = "/tmp/demo_state.json"
+
+def save_persistent_state():
+    """Save demo balance/journal to local disk and GitHub for durability across restarts/deploys."""
+    try:
+        snapshot = {
+            "demo_balance": state["demo_balance"],
+            "demo_journal": state["demo_journal"],
+            "demo_id_counter": state["demo_id_counter"],
+            "demo_pending_reinvest": state["demo_pending_reinvest"],
+            "last_session_snapshot": state.get("last_session_snapshot"),
+        }
+        with open(LOCAL_STATE_FILE, "w") as f:
+            json.dump(snapshot, f)
+        if GITHUB_TOKEN:
+            content_b64 = __import__("base64").b64encode(json.dumps(snapshot).encode()).decode()
+            r = requests.get(
+                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATE_FILE_PATH}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=10
+            )
+            sha = r.json().get("sha") if r.status_code == 200 else None
+            payload = {"message": "Update demo state", "content": content_b64}
+            if sha:
+                payload["sha"] = sha
+            requests.put(
+                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATE_FILE_PATH}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}"}, json=payload, timeout=10
+            )
+    except Exception as e:
+        log.error(f"save_persistent_state failed: {e}")
+
+def load_persistent_state():
+    """Load demo state from GitHub (or local disk fallback) on startup."""
+    try:
+        if GITHUB_TOKEN:
+            r = requests.get(
+                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATE_FILE_PATH}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=10
+            )
+            if r.status_code == 200:
+                import base64 as b64mod
+                snapshot = json.loads(b64mod.b64decode(r.json()["content"]))
+                state["demo_balance"] = snapshot.get("demo_balance", 10000.0)
+                state["demo_journal"] = snapshot.get("demo_journal", [])
+                state["demo_id_counter"] = snapshot.get("demo_id_counter", 0)
+                state["demo_pending_reinvest"] = snapshot.get("demo_pending_reinvest", 0.0)
+                state["last_session_snapshot"] = snapshot.get("last_session_snapshot")
+                log.info(f"Loaded persistent state: balance=${state['demo_balance']:.2f}, journal={len(state['demo_journal'])} trades")
+                return
+    except Exception as e:
+        log.error(f"load_persistent_state from GitHub failed: {e}")
+    try:
+        if os.path.exists(LOCAL_STATE_FILE):
+            with open(LOCAL_STATE_FILE) as f:
+                snapshot = json.load(f)
+            state["demo_balance"] = snapshot.get("demo_balance", 10000.0)
+            state["demo_journal"] = snapshot.get("demo_journal", [])
+            state["demo_id_counter"] = snapshot.get("demo_id_counter", 0)
+            state["demo_pending_reinvest"] = snapshot.get("demo_pending_reinvest", 0.0)
+            log.info("Loaded persistent state from local disk fallback")
+    except Exception as e:
+        log.error(f"load_persistent_state local fallback failed: {e}")
+
 ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT  = os.environ["TELEGRAM_CHAT_ID"]
@@ -197,6 +263,10 @@ def update_history():
     update_demo_positions()
 
 def log_journal_entry(p):
+    _log_journal_entry_impl(p)
+    threading.Thread(target=save_persistent_state, daemon=True).start()
+
+def _log_journal_entry_impl(p):
     """Append a closed position to the permanent journal for later analysis."""
     state["demo_journal"].append({
         "id": p["id"],
@@ -330,6 +400,7 @@ def price_monitor():
 
 def main():
     log.info("JARVIS ANALYST v3 starting...")
+    load_persistent_state()
     load_pairs()
     tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Сигнал в 13:00 UTC\nКаждые {INTERVAL_MIN} мин")
     time.sleep(10)
