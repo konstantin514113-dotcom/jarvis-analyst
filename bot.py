@@ -216,14 +216,10 @@ def send_top5(now):
 def run_cycle():
     now = datetime.now(timezone.utc)
     if now.hour == SESSION_START and now.minute < INTERVAL_MIN:
-        state["history"] = []; state["accumulated"] = {}
-        state["daily_sent"] = False; state["status"] = "ready"
+        state["history"] = []
         log.info("Daily reset")
     if not (SESSION_START <= now.hour < SESSION_END):
         state["status"] = "outside_session"; return
-    if now.hour >= SIGNAL_HOUR and not state["daily_sent"] and state["accumulated"]:
-        send_top5(now); state["daily_sent"] = True; return
-    if state["daily_sent"]: return
     state["status"] = "scanning"
     log.info(f"Scanning {len(PAIRS)} pairs...")
     try:
@@ -234,15 +230,44 @@ def run_cycle():
             state["next_scan"] = now.timestamp() + INTERVAL_MIN*60
             state["status"] = "waiting"; return
         result = analyze_with_claude(candidates)
-        for p in result.get("top_pairs",[])[:5]:
-            sym = p.get("symbol","")
-            if sym not in state["accumulated"]:
-                state["accumulated"][sym] = {"count":0,"data":p}
-            state["accumulated"][sym]["count"] += 1
-            state["accumulated"][sym]["data"] = p
-        log.info(f"Accumulated: {len(state['accumulated'])} pairs")
+        pairs = result.get("top_pairs",[])[:5]
+        if not pairs:
+            state["scan_count"] += 1
+            state["next_scan"] = now.timestamp() + INTERVAL_MIN*60
+            state["status"] = "waiting"; return
+
+        for p in pairs:
+            e = p.get("entry", 0)
+            if e > 0:
+                p["stop_loss"] = round(e * 0.985, 8)
+                p["take_profit"] = round(e * 1.035, 8)
+
+        scan_time = now.strftime("%H:%M UTC")
+        state["signals"] = [{"rank":i+1,**p,"scan_time":scan_time} for i,p in enumerate(pairs)]
+        state["last_scan"] = scan_time
         state["scan_count"] += 1
         state["next_scan"] = now.timestamp() + INTERVAL_MIN*60
+
+        today_syms = {h["symbol"] for h in state["history"]}
+        new_pairs = [p for p in pairs if p["symbol"] not in today_syms]
+        for p in new_pairs:
+            state["history"].append({"symbol":p["symbol"],"scan_time":scan_time,
+                "entry":p.get("entry",0),"stop_loss":p.get("stop_loss",0),"take_profit":p.get("take_profit",0),
+                "score":p.get("score",0),"rsi":p.get("rsi",0),"macd":p.get("macd",""),
+                "reason":p.get("reason",""),"current_price":p.get("entry",0),"pct_change":0.0,
+                "status":"active","result":None})
+
+        if new_pairs:
+            msgs = []
+            for i, p in enumerate(pairs):
+                sym = p["symbol"].replace("-USDT","")
+                e=p.get("entry",0); sl=p.get("stop_loss",0); tp=p.get("take_profit",0)
+                rr = abs((tp-e)/(e-sl)) if abs(e-sl)>0 else 0
+                msgs.append(f"#{i+1} {sym}/USDT\nВход: {e} | SL: {sl} | TP: {tp}\nRR: 1:{rr:.1f} | Score: {p.get('score',0)}\nRSI: {p.get('rsi','?')} | 1H: {p.get('rsi_1h','?')}\n{p.get('reason','')}")
+            header = f"JARVIS SIGNAL | {scan_time}\n" + "-"*16 + "\n"
+            tg(header + "\n\n".join(msgs) + "\n\n" + "-"*16 + "\nНе финансовый совет.")
+            log.info(f"Sent signal: {[p['symbol'] for p in pairs]}")
+
         state["status"] = "waiting"
     except Exception as e:
         log.error(f"Cycle error: {e}", exc_info=True)
