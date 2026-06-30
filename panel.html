@@ -16,31 +16,62 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 .timer{text-align:center;padding:6px;font-size:11px;color:#30363d;letter-spacing:1px}
 .timer span{color:#58a6ff}
+
+.balance-bar{margin:8px 12px;background:#0d1117;border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
+.balance-label{font-size:9px;color:#30363d;letter-spacing:2px}
+.balance-val{font-size:18px;font-weight:700;color:#fff}
+.demo-tag{font-size:8px;background:#58a6ff22;color:#58a6ff;padding:2px 6px;border-radius:4px;margin-left:6px}
+
 .cards{padding:8px 12px;display:flex;flex-direction:column;gap:10px}
 .card{background:#0d1117;border:1px solid #161b22;border-radius:16px;padding:16px;position:relative;overflow:hidden}
 .card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
 .card.r1::before{background:linear-gradient(90deg,#00e676,#69f0ae)}
 .card.r2::before{background:linear-gradient(90deg,#58a6ff,#79c0ff)}
 .card.r3::before{background:linear-gradient(90deg,#ffea00,#ffd740)}
+.card.r4::before{background:linear-gradient(90deg,#ff8a65,#ffab91)}
+.card.r5::before{background:linear-gradient(90deg,#ce93d8,#e1bee7)}
 .card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .pair{font-size:18px;font-weight:700;color:#fff}
 .score{font-size:11px;padding:3px 8px;border-radius:20px;font-weight:700}
 .sc1{background:#00e67211;color:#00e676}
 .sc2{background:#58a6ff11;color:#58a6ff}
 .sc3{background:#ffea0011;color:#ffea00}
+.sc4{background:#ff8a6511;color:#ff8a65}
+.sc5{background:#ce93d811;color:#ce93d8}
 .confirm{font-size:10px;color:#00e676;margin-bottom:12px}
 .prices{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
 .price-box{background:#080b0f;border-radius:10px;padding:10px;text-align:center}
 .price-label{font-size:8px;color:#455a64;letter-spacing:1px;margin-bottom:4px}
 .price-val{font-size:12px;font-weight:700}
 .pv-e{color:#fff}.pv-s{color:#ff5252}.pv-t{color:#00e676}
-.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.btn-trade{background:linear-gradient(135deg,#00e676,#00c853);border:none;border-radius:10px;padding:13px;font-size:12px;font-weight:700;color:#000;font-family:'JetBrains Mono',monospace;cursor:pointer;letter-spacing:1px}
-.btn-skip{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:13px;font-size:12px;color:#546e7a;font-family:'JetBrains Mono',monospace;cursor:pointer}
-.day-result{margin:8px 12px 16px;background:#0d1117;border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
-.day-label{font-size:9px;color:#30363d;letter-spacing:2px}
-.day-val{font-size:16px;font-weight:700}
-.waiting{padding:80px 20px;text-align:center}
+
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.btn-long{background:linear-gradient(135deg,#00e676,#00c853);border:none;border-radius:10px;padding:13px;font-size:12px;font-weight:700;color:#000;font-family:'JetBrains Mono',monospace;cursor:pointer;letter-spacing:1px}
+.btn-short{background:linear-gradient(135deg,#ff1744,#d50000);border:none;border-radius:10px;padding:13px;font-size:12px;font-weight:700;color:#fff;font-family:'JetBrains Mono',monospace;cursor:pointer;letter-spacing:1px}
+.btn-row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn-trade{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:10px;font-size:11px;color:#58a6ff;font-family:'JetBrains Mono',monospace;cursor:pointer}
+.btn-skip{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:10px;font-size:11px;color:#546e7a;font-family:'JetBrains Mono',monospace;cursor:pointer}
+
+.positions-section{padding:8px 12px;margin-top:8px}
+.section-title{font-size:10px;color:#455a64;letter-spacing:2px;margin-bottom:8px;padding-left:4px}
+.pos-card{background:#0d1117;border:1px solid #161b22;border-radius:12px;padding:12px 14px;margin-bottom:8px}
+.pos-card.win{border-left:3px solid #00e676}
+.pos-card.loss{border-left:3px solid #ff5252}
+.pos-card.open-long{border-left:3px solid #00e676}
+.pos-card.open-short{border-left:3px solid #ff1744}
+.pos-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.pos-pair{font-size:13px;font-weight:700;color:#fff}
+.pos-dir{font-size:9px;padding:2px 6px;border-radius:4px;margin-left:6px}
+.pos-dir.long{background:#00e67622;color:#00e676}
+.pos-dir.short{background:#ff174422;color:#ff5252}
+.pos-pnl{font-size:14px;font-weight:700}
+.pos-pnl.pos{color:#00e676}
+.pos-pnl.neg{color:#ff5252}
+.pos-detail{font-size:9px;color:#455a64;margin-bottom:8px}
+.btn-close{width:100%;background:#161b22;border:1px solid #ff174433;border-radius:8px;padding:8px;font-size:10px;color:#ff5252;font-family:'JetBrains Mono',monospace;cursor:pointer}
+.btn-close-all{margin:8px 12px;width:calc(100% - 24px);background:linear-gradient(135deg,#ff1744,#d50000);border:none;border-radius:10px;padding:12px;font-size:12px;font-weight:700;color:#fff;font-family:'JetBrains Mono',monospace;cursor:pointer}
+
+.waiting{padding:60px 20px;text-align:center}
 .waiting-icon{font-size:36px;margin-bottom:14px}
 .waiting-text{font-size:11px;color:#30363d;letter-spacing:2px;margin-bottom:6px}
 .waiting-sub{font-size:10px;color:#21262d}
@@ -52,25 +83,79 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
   <div class="live"><div class="dot" id="dot" style="background:#ffea00"></div><span id="st" style="color:#ffea00;font-size:10px">LOADING</span></div>
 </div>
 <div class="timer">след. скан через <span id="tmr">—</span></div>
+
+<div class="balance-bar">
+  <div>
+    <div class="balance-label">DEMO БАЛАНС <span class="demo-tag">PAPER</span></div>
+    <div class="balance-val" id="balance">$10,000.00</div>
+  </div>
+  <div style="text-align:right">
+    <div class="balance-label">ОТКРЫТО</div>
+    <div class="balance-val" id="open-count" style="font-size:14px">0</div>
+  </div>
+</div>
+
 <div class="cards" id="cards">
-  <div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует каждые 15 минут</div></div>
+  <div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует 300 пар</div></div>
 </div>
-<div class="day-result">
-  <div class="day-label">ИТОГ ДНЯ</div>
-  <div class="day-val" id="day-val" style="color:#30363d">—</div>
+
+<div class="positions-section" id="positions-section" style="display:none">
+  <div class="section-title">ОТКРЫТЫЕ ПОЗИЦИИ (DEMO)</div>
+  <div id="open-positions"></div>
+  <button class="btn-close-all" onclick="closeAll()" id="close-all-btn" style="display:none">✕ ЗАКРЫТЬ ВСЕ ПОЗИЦИИ</button>
 </div>
+
+<div class="positions-section" id="closed-section" style="display:none">
+  <div class="section-title">ИСТОРИЯ DEMO-СДЕЛОК</div>
+  <div id="closed-positions"></div>
+</div>
+
 <script>
+const LEVERAGE = 1.25;
+const SIZE_PER_TRADE = 2000;
+
+function fmtMoney(n){
+  const sign = n >= 0 ? '+' : '';
+  return sign + '$' + Math.abs(n).toFixed(2);
+}
+
+async function openDemo(symbol, direction, entry, sl, tp){
+  try{
+    const r = await fetch('/demo/open', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({symbol, direction, entry, stop_loss: sl, take_profit: tp, leverage: LEVERAGE, size: SIZE_PER_TRADE})
+    });
+    const d = await r.json();
+    if(d.ok){ fetchDemoState(); }
+  }catch(e){}
+}
+
+async function closePosition(id){
+  try{
+    await fetch('/demo/close', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+    fetchDemoState();
+  }catch(e){}
+}
+
+async function closeAll(){
+  try{
+    await fetch('/demo/close_all', {method:'POST'});
+    fetchDemoState();
+  }catch(e){}
+}
+
 function trade(sym){window.open('https://www.okx.com/trade-swap/'+sym.toLowerCase().replace('-usdt','')+'-usdt-swap','_blank')}
 
 function renderCards(sigs){
   if(!sigs||!sigs.length){
-    document.getElementById('cards').innerHTML='<div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует каждые 15 минут</div></div>';
+    document.getElementById('cards').innerHTML='<div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует 300 пар</div></div>';
     return;
   }
   document.getElementById('cards').innerHTML = sigs.map((s,i)=>{
     const sym=s.symbol.replace('-USDT','');
-    const rc=i===0?'r1':i===1?'r2':'r3';
-    const sc=i===0?'sc1':i===1?'sc2':'sc3';
+    const rc=['r1','r2','r3','r4','r5'][i] || 'r5';
+    const sc=['sc1','sc2','sc3','sc4','sc5'][i] || 'sc5';
     return '<div class="card '+rc+'">'+
       '<div class="card-head"><div class="pair">'+sym+'/USDT</div><div class="score '+sc+'">SCORE '+s.score+'</div></div>'+
       '<div class="confirm">✅ 1H подтверждён · двойной скан</div>'+
@@ -80,11 +165,63 @@ function renderCards(sigs){
         '<div class="price-box"><div class="price-label">ТЕЙК</div><div class="price-val pv-t">'+s.take_profit+'</div></div>'+
       '</div>'+
       '<div class="btns">'+
-        '<button class="btn-trade" onclick="trade(\''+s.symbol+'\')">▲ ТОРГОВАТЬ</button>'+
+        '<button class="btn-long" onclick="openDemo(\''+s.symbol+'\',\'LONG\','+s.entry+','+s.stop_loss+','+s.take_profit+')">▲ LONG (DEMO)</button>'+
+        '<button class="btn-short" onclick="openDemo(\''+s.symbol+'\',\'SHORT\','+s.entry+','+s.take_profit+','+s.stop_loss+')">▼ SHORT (DEMO)</button>'+
+      '</div>'+
+      '<div class="btn-row2">'+
+        '<button class="btn-trade" onclick="trade(\''+s.symbol+'\')">OKX</button>'+
         '<button class="btn-skip">ПРОПУСТИТЬ</button>'+
       '</div>'+
     '</div>';
   }).join('');
+}
+
+function renderPositions(positions){
+  const open = positions.filter(p=>p.status==='open');
+  const closed = positions.filter(p=>p.status==='closed').slice(-10).reverse();
+
+  document.getElementById('open-count').textContent = open.length;
+
+  const openSection = document.getElementById('positions-section');
+  const closeAllBtn = document.getElementById('close-all-btn');
+  if(open.length){
+    openSection.style.display='block';
+    closeAllBtn.style.display='block';
+    document.getElementById('open-positions').innerHTML = open.map(p=>{
+      const sym = p.symbol.replace('-USDT','');
+      const pnlClass = p.pnl_usd >= 0 ? 'pos' : 'neg';
+      const dirClass = p.direction === 'LONG' ? 'open-long' : 'open-short';
+      return '<div class="pos-card '+dirClass+'">'+
+        '<div class="pos-head">'+
+          '<div><span class="pos-pair">'+sym+'/USDT</span><span class="pos-dir '+(p.direction==='LONG'?'long':'short')+'">'+p.direction+'</span></div>'+
+          '<div class="pos-pnl '+pnlClass+'">'+fmtMoney(p.pnl_usd)+'</div>'+
+        '</div>'+
+        '<div class="pos-detail">Вход: '+p.entry+' · Сейчас: '+(p.current_price||p.entry).toFixed(6)+' · '+p.pnl_pct+'%</div>'+
+        '<button class="btn-close" onclick="closePosition('+p.id+')">✕ ЗАКРЫТЬ</button>'+
+      '</div>';
+    }).join('');
+  } else {
+    openSection.style.display='none';
+  }
+
+  const closedSection = document.getElementById('closed-section');
+  if(closed.length){
+    closedSection.style.display='block';
+    document.getElementById('closed-positions').innerHTML = closed.map(p=>{
+      const sym = p.symbol.replace('-USDT','');
+      const cls = p.result === 'WIN' ? 'win' : 'loss';
+      const pnlClass = p.pnl_usd >= 0 ? 'pos' : 'neg';
+      return '<div class="pos-card '+cls+'">'+
+        '<div class="pos-head">'+
+          '<div><span class="pos-pair">'+sym+'/USDT</span><span class="pos-dir '+(p.direction==='LONG'?'long':'short')+'">'+p.direction+'</span></div>'+
+          '<div class="pos-pnl '+pnlClass+'">'+fmtMoney(p.pnl_usd)+'</div>'+
+        '</div>'+
+        '<div class="pos-detail">'+(p.result==='WIN'?'✅ TP':'❌ SL')+' · Закрыто: '+p.closed_at+'</div>'+
+      '</div>';
+    }).join('');
+  } else {
+    closedSection.style.display='none';
+  }
 }
 
 function updateTimer(next){
@@ -104,17 +241,22 @@ async function fetchData(){
     else{dot.style.background='#ffea00';st.style.color='#ffea00';st.textContent='WAITING';}
     renderCards(sigs);
     updateTimer(d.next_scan);
-    const hist=d.history||[];
-    let total=0;
-    hist.forEach(h=>{if(h.pct_change)total+=h.pct_change;});
-    const dv=document.getElementById('day-val');
-    dv.textContent=(total>=0?'+':'')+total.toFixed(2)+'%';
-    dv.style.color=total>=0?'#00e676':'#ff1744';
   }catch(e){document.getElementById('st').textContent='ERROR';}
 }
 
+async function fetchDemoState(){
+  try{
+    const r = await fetch('/demo/state');
+    const d = await r.json();
+    document.getElementById('balance').textContent = '$' + d.balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    renderPositions(d.positions || []);
+  }catch(e){}
+}
+
 fetchData();
+fetchDemoState();
 setInterval(fetchData,15000);
+setInterval(fetchDemoState,5000);
 setInterval(()=>{fetch('/signals').then(r=>r.json()).then(d=>updateTimer(d.next_scan)).catch(()=>{})},1000);
 </script>
 </body>
