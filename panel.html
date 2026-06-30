@@ -381,19 +381,23 @@ function renderCards(sigs){
   }).join('');
 }
 
-function renderPositions(positions, balance, pendingReinvest){
+function renderPositions(positions, balance, pendingReinvest, sessionStartBalance){
   const open = positions.filter(p=>p.status==='open');
   const closed = positions.filter(p=>p.status==='closed');
 
   document.getElementById('open-count').textContent = open.length;
 
+  // Session total = realized PnL from closed trades this session + unrealized PnL from still-open positions
+  const unrealizedPnl = open.reduce((sum,p)=> sum + (p.pnl_usd||0), 0);
+  const sessionTotal = pendingReinvest + unrealizedPnl;
+
   const dayMoneyEl = document.getElementById('day-money');
   const dayPctEl = document.getElementById('day-pct');
-  const dayPct = (pendingReinvest / STARTING_BALANCE_REF) * 100;
-  dayMoneyEl.textContent = fmtMoney(pendingReinvest);
-  dayMoneyEl.style.color = pendingReinvest >= 0 ? '#00e676' : (pendingReinvest < 0 ? '#ff5252' : '#30363d');
+  const dayPct = sessionStartBalance > 0 ? (sessionTotal / sessionStartBalance) * 100 : 0;
+  dayMoneyEl.textContent = fmtMoney(sessionTotal);
+  dayMoneyEl.style.color = sessionTotal >= 0 ? '#00e676' : (sessionTotal < 0 ? '#ff5252' : '#30363d');
   dayPctEl.textContent = fmtPct(dayPct);
-  dayPctEl.style.color = pendingReinvest >= 0 ? '#00e676' : (pendingReinvest < 0 ? '#ff5252' : '#30363d');
+  dayPctEl.style.color = sessionTotal >= 0 ? '#00e676' : (sessionTotal < 0 ? '#ff5252' : '#30363d');
 
   const openSection = document.getElementById('positions-section');
   const closeAllBtn = document.getElementById('close-all-btn');
@@ -445,7 +449,7 @@ async function fetchDemoState(){
     document.getElementById('balance').textContent = '$' + d.balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
     lastSuggestedSize = d.suggested_size || 2000;
     document.getElementById('size-hint').textContent = 'Размер на пару: $' + lastSuggestedSize.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' (1/5 депозита)';
-    renderPositions(d.positions || [], d.balance, d.pending_reinvest || 0);
+    renderPositions(d.positions || [], d.balance, d.pending_reinvest || 0, d.session_start_balance || d.balance);
   }catch(e){}
 }
 
