@@ -132,6 +132,19 @@ def analyze_pair(symbol):
     above_ma = t["price"] > ma20 if ma20 else False
     htf = (40<=rsi1h<=70) and ("bullish" in macd1h or "crossing_up" in macd1h)
     if not htf: return None
+
+    # Volume confirmation: last 1H volume vs average hourly volume over 7 days
+    volume_confirmed = True
+    try:
+        c1h_week = get_candles(symbol, "1H", 168)  # 7 days of hourly candles
+        if c1h_week and len(c1h_week) >= 24:
+            last_hour_vol = c1h_week[-1]["v"]
+            avg_hourly_vol = sum(c["v"] for c in c1h_week[:-1]) / (len(c1h_week)-1)
+            volume_confirmed = last_hour_vol >= avg_hourly_vol * 1.2  # 20% above average
+    except:
+        pass
+    if not volume_confirmed: return None
+
     dist = (t["high24h"]-t["price"])/t["high24h"]*100 if t["high24h"]>0 else 0
     score = 0
     score += min(t["change24h"]*3,30)
@@ -142,7 +155,7 @@ def analyze_pair(symbol):
     score += 10 if dist>1 else 0
     score += 20
     if score < 89: return None
-    return {**t,"rsi":rsi15,"rsi_1h":rsi1h,"macd":macd15,"macd_1h":macd1h,
+    return {**t,"rsi":rsi15,"rsi_1h":rsi1h,"macd":macd15,"macd_1h":macd1h,"volume_confirmed":True,
             "htf_bullish":True,"above_ma20":above_ma,"dist_from_high":round(dist,2),"score":round(score,1)}
 
 def scan():
