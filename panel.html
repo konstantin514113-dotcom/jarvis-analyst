@@ -17,16 +17,24 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 .timer{text-align:center;padding:6px;font-size:11px;color:#30363d;letter-spacing:1px}
 .timer span{color:#58a6ff}
 
+.tabs{display:flex;margin:8px 12px;background:#0d1117;border-radius:10px;padding:3px;gap:3px}
+.tab{flex:1;text-align:center;padding:8px;border-radius:8px;font-size:10px;color:#546e7a;cursor:pointer;letter-spacing:1px}
+.tab.active{background:#161b22;color:#fff}
+
 .balance-bar{margin:8px 12px;background:#0d1117;border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
 .balance-label{font-size:9px;color:#30363d;letter-spacing:2px}
 .balance-val{font-size:18px;font-weight:700;color:#fff}
 .demo-tag{font-size:8px;background:#58a6ff22;color:#58a6ff;padding:2px 6px;border-radius:4px;margin-left:6px}
 
-.day-result{margin:8px 12px;background:#0d1117;border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
+.day-result{margin:8px 12px;background:#0d1117;border-radius:12px;padding:12px 16px}
+.day-row{display:flex;justify-content:space-between;align-items:center}
 .day-label{font-size:9px;color:#30363d;letter-spacing:2px}
 .day-vals{display:flex;gap:10px;align-items:baseline}
 .day-money{font-size:16px;font-weight:700}
 .day-pct{font-size:11px;font-weight:700;opacity:0.8}
+.btn-reinvest{width:100%;margin-top:10px;background:linear-gradient(135deg,#58a6ff,#388bfd);border:none;border-radius:8px;padding:10px;font-size:11px;font-weight:700;color:#000;font-family:'JetBrains Mono',monospace;cursor:pointer;letter-spacing:1px}
+.btn-reinvest:disabled{background:#161b22;color:#455a64;cursor:not-allowed}
+.size-hint{font-size:9px;color:#455a64;margin-top:6px;text-align:center}
 
 .cards{padding:8px 12px;display:flex;flex-direction:column;gap:10px}
 .card{background:#0d1117;border:1px solid #161b22;border-radius:16px;padding:16px;position:relative;overflow:hidden}
@@ -52,10 +60,13 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 .price-val{font-size:12px;font-weight:700}
 .pv-e{color:#fff}.pv-s{color:#ff5252}.pv-t{color:#00e676}
 
-.config-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.alloc-box{background:#080b0f;border-radius:10px;padding:8px 10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.alloc-label{font-size:9px;color:#455a64;letter-spacing:1px}
+.alloc-val{font-size:13px;font-weight:700;color:#58a6ff}
+
+.config-row{display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:8px}
 .config-box{background:#080b0f;border-radius:10px;padding:8px 10px}
 .config-label{font-size:8px;color:#455a64;letter-spacing:1px;margin-bottom:5px}
-.size-input{width:100%;background:transparent;border:none;color:#fff;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;outline:none}
 .lev-btns{display:flex;gap:4px}
 .lev-btn{flex:1;background:#161b22;border:1px solid #21262d;border-radius:6px;padding:5px 0;text-align:center;font-size:10px;color:#546e7a;cursor:pointer}
 .lev-btn.active{background:#58a6ff22;border-color:#58a6ff;color:#58a6ff}
@@ -97,6 +108,23 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 .waiting-icon{font-size:36px;margin-bottom:14px}
 .waiting-text{font-size:11px;color:#30363d;letter-spacing:2px;margin-bottom:6px}
 .waiting-sub{font-size:10px;color:#21262d}
+
+/* Journal/Stats tab */
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 12px;margin-bottom:8px}
+.stat-box{background:#0d1117;border-radius:12px;padding:12px}
+.stat-label{font-size:8px;color:#455a64;letter-spacing:1px;margin-bottom:4px}
+.stat-val{font-size:18px;font-weight:700;color:#fff}
+.stat-val.green{color:#00e676}
+.stat-val.red{color:#ff5252}
+
+.journal-table{margin:0 12px;background:#0d1117;border-radius:12px;overflow:hidden}
+.jt-row{display:grid;grid-template-columns:1.4fr 0.8fr 0.8fr 0.8fr;padding:10px 12px;border-bottom:1px solid #161b22;font-size:10px;align-items:center}
+.jt-row:last-child{border-bottom:none}
+.jt-row.header{color:#455a64;font-size:8px;letter-spacing:1px;background:#080b0f}
+.jt-pair{color:#fff;font-weight:700}
+.jt-pnl.pos{color:#00e676;font-weight:700}
+.jt-pnl.neg{color:#ff5252;font-weight:700}
+.empty-journal{padding:40px 20px;text-align:center;color:#30363d;font-size:11px}
 </style>
 </head>
 <body>
@@ -105,6 +133,13 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
   <div class="live"><div class="dot" id="dot" style="background:#ffea00"></div><span id="st" style="color:#ffea00;font-size:10px">LOADING</span></div>
 </div>
 <div class="timer">след. скан через <span id="tmr">—</span></div>
+
+<div class="tabs">
+  <div class="tab active" id="tab-trade" onclick="switchTab('trade')">ТОРГОВЛЯ</div>
+  <div class="tab" id="tab-journal" onclick="switchTab('journal')">ЖУРНАЛ</div>
+</div>
+
+<div id="view-trade">
 
 <div class="balance-bar">
   <div>
@@ -118,11 +153,15 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 </div>
 
 <div class="day-result">
-  <div class="day-label">ИТОГ ДНЯ</div>
-  <div class="day-vals">
-    <div class="day-money" id="day-money" style="color:#30363d">$0.00</div>
-    <div class="day-pct" id="day-pct" style="color:#30363d">0.00%</div>
+  <div class="day-row">
+    <div class="day-label">ИТОГ ДНЯ</div>
+    <div class="day-vals">
+      <div class="day-money" id="day-money" style="color:#30363d">$0.00</div>
+      <div class="day-pct" id="day-pct" style="color:#30363d">0.00%</div>
+    </div>
   </div>
+  <button class="btn-reinvest" id="reinvest-btn" onclick="reinvestDay()" disabled>↻ РЕИНВЕСТИРОВАТЬ ДЕНЬ</button>
+  <div class="size-hint" id="size-hint">Размер на пару: $2,000.00 (1/5 депозита)</div>
 </div>
 
 <div class="cards" id="cards">
@@ -135,18 +174,39 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
   <button class="btn-close-all" onclick="closeAll()" id="close-all-btn" style="display:none">✕ ЗАКРЫТЬ ВСЕ ПОЗИЦИИ</button>
 </div>
 
-<div class="positions-section" id="closed-section" style="display:none">
-  <div class="section-title">ИСТОРИЯ DEMO-СДЕЛОК</div>
-  <div id="closed-positions"></div>
+</div>
+
+<div id="view-journal" style="display:none">
+  <div class="stats-grid">
+    <div class="stat-box"><div class="stat-label">СДЕЛОК</div><div class="stat-val" id="st-trades">0</div></div>
+    <div class="stat-box"><div class="stat-label">ВИНРЕЙТ</div><div class="stat-val" id="st-winrate">0%</div></div>
+    <div class="stat-box"><div class="stat-label">ПОБЕД</div><div class="stat-val green" id="st-wins">0</div></div>
+    <div class="stat-box"><div class="stat-label">ПОРАЖЕНИЙ</div><div class="stat-val red" id="st-losses">0</div></div>
+    <div class="stat-box"><div class="stat-label">ИТОГО P&L</div><div class="stat-val" id="st-pnl">$0.00</div></div>
+    <div class="stat-box"><div class="stat-label">СРЕДНИЙ ВЫИГРЫШ</div><div class="stat-val green" id="st-avgwin">$0.00</div></div>
+  </div>
+
+  <div class="section-title" style="padding-left:16px;margin-top:14px">ИСТОРИЯ СДЕЛОК</div>
+  <div class="journal-table" id="journal-table">
+    <div class="empty-journal">Пока нет закрытых сделок</div>
+  </div>
 </div>
 
 <script>
-const cardConfig = {}; // symbol -> {size, leverage, slPct, tpPct}
-const STARTING_BALANCE = 10000;
+const STARTING_BALANCE_REF = 10000;
+const cardConfig = {};
 
-function getConfig(symbol, entry){
+function switchTab(tab){
+  document.getElementById('tab-trade').classList.toggle('active', tab==='trade');
+  document.getElementById('tab-journal').classList.toggle('active', tab==='journal');
+  document.getElementById('view-trade').style.display = tab==='trade' ? 'block' : 'none';
+  document.getElementById('view-journal').style.display = tab==='journal' ? 'block' : 'none';
+  if(tab==='journal') fetchStats();
+}
+
+function getConfig(symbol){
   if(!cardConfig[symbol]){
-    cardConfig[symbol] = {size: 2000, leverage: 1.25, slPct: 1.5, tpPct: 3.5};
+    cardConfig[symbol] = {leverage: 1.25, slPct: 1.5, tpPct: 3.5};
   }
   return cardConfig[symbol];
 }
@@ -168,10 +228,6 @@ function setLeverage(symbol, lev, btn){
   updateCardPrices(symbol);
 }
 
-function updateSize(symbol, val){
-  cardConfig[symbol].size = parseFloat(val) || 0;
-}
-
 function updateSlPct(symbol, val, entry){
   cardConfig[symbol].slPct = parseFloat(val) || 0;
   updateCardPrices(symbol, entry);
@@ -185,14 +241,17 @@ function updateTpPct(symbol, val, entry){
 function updateCardPrices(symbol, entry){
   const cfg = cardConfig[symbol];
   if(!entry) return;
-  const slEl = document.getElementById('sl-price-'+symbol.replace(/[^a-zA-Z0-9]/g,''));
-  const tpEl = document.getElementById('tp-price-'+symbol.replace(/[^a-zA-Z0-9]/g,''));
+  const safeId = symbol.replace(/[^a-zA-Z0-9]/g,'');
+  const slEl = document.getElementById('sl-price-'+safeId);
+  const tpEl = document.getElementById('tp-price-'+safeId);
   if(slEl) slEl.textContent = (entry * (1 - cfg.slPct/100)).toPrecision(6);
   if(tpEl) tpEl.textContent = (entry * (1 + cfg.tpPct/100)).toPrecision(6);
 }
 
+let lastSuggestedSize = 2000;
+
 async function openDemo(symbol, direction, entry){
-  const cfg = getConfig(symbol, entry);
+  const cfg = getConfig(symbol);
   let sl, tp;
   if(direction === 'LONG'){
     sl = entry * (1 - cfg.slPct/100);
@@ -205,7 +264,7 @@ async function openDemo(symbol, direction, entry){
     const r = await fetch('/demo/open', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({symbol, direction, entry, stop_loss: sl, take_profit: tp, leverage: cfg.leverage, size: cfg.size})
+      body: JSON.stringify({symbol, direction, entry, stop_loss: sl, take_profit: tp, leverage: cfg.leverage, size: lastSuggestedSize})
     });
     const d = await r.json();
     if(d.ok){ fetchDemoState(); }
@@ -226,6 +285,14 @@ async function closeAll(){
   }catch(e){}
 }
 
+async function reinvestDay(){
+  try{
+    const r = await fetch('/demo/reinvest', {method:'POST'});
+    const d = await r.json();
+    if(d.ok){ fetchDemoState(); }
+  }catch(e){}
+}
+
 function trade(sym){window.open('https://www.okx.com/trade-swap/'+sym.toLowerCase().replace('-usdt','')+'-usdt-swap','_blank')}
 
 function renderCards(sigs){
@@ -233,12 +300,13 @@ function renderCards(sigs){
     document.getElementById('cards').innerHTML='<div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует 300 пар</div></div>';
     return;
   }
+  const perPairSize = lastSuggestedSize;
   document.getElementById('cards').innerHTML = sigs.map((s,i)=>{
     const sym=s.symbol.replace('-USDT','');
     const safeId = s.symbol.replace(/[^a-zA-Z0-9]/g,'');
     const rc=['r1','r2','r3','r4','r5'][i] || 'r5';
     const sc=['sc1','sc2','sc3','sc4','sc5'][i] || 'sc5';
-    const cfg = getConfig(s.symbol, s.entry);
+    const cfg = getConfig(s.symbol);
     const slPrice = (s.entry * (1 - cfg.slPct/100)).toPrecision(6);
     const tpPrice = (s.entry * (1 + cfg.tpPct/100)).toPrecision(6);
     return '<div class="card '+rc+'">'+
@@ -249,8 +317,8 @@ function renderCards(sigs){
         '<div class="price-box"><div class="price-label">СТОП</div><div class="price-val pv-s" id="sl-price-'+safeId+'">'+slPrice+'</div></div>'+
         '<div class="price-box"><div class="price-label">ТЕЙК</div><div class="price-val pv-t" id="tp-price-'+safeId+'">'+tpPrice+'</div></div>'+
       '</div>'+
+      '<div class="alloc-box"><span class="alloc-label">ДОЛЯ ОТ ДЕПОЗИТА (1/5)</span><span class="alloc-val">$'+perPairSize.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span></div>'+
       '<div class="config-row">'+
-        '<div class="config-box"><div class="config-label">СУММА USDT</div><input class="size-input" type="number" value="'+cfg.size+'" onchange="updateSize(\''+s.symbol+'\',this.value)"></div>'+
         '<div class="config-box"><div class="config-label">ПЛЕЧО</div><div class="lev-btns">'+
           [1,1.25,1.5,2].map(l=>'<div class="lev-btn'+(cfg.leverage===l?' active':'')+'" onclick="setLeverage(\''+s.symbol+'\','+l+',this)">'+l+'x</div>').join('')+
         '</div></div>'+
@@ -271,21 +339,22 @@ function renderCards(sigs){
   }).join('');
 }
 
-function renderPositions(positions, balance){
+function renderPositions(positions, balance, pendingReinvest){
   const open = positions.filter(p=>p.status==='open');
-  const closed = positions.filter(p=>p.status==='closed').slice(-10).reverse();
+  const closed = positions.filter(p=>p.status==='closed');
 
   document.getElementById('open-count').textContent = open.length;
 
-  // Day result: money + percent from starting balance
-  const totalPnl = positions.reduce((sum,p)=> sum + (p.pnl_usd||0), 0);
   const dayMoneyEl = document.getElementById('day-money');
   const dayPctEl = document.getElementById('day-pct');
-  const dayPct = (totalPnl / STARTING_BALANCE) * 100;
-  dayMoneyEl.textContent = fmtMoney(totalPnl);
-  dayMoneyEl.style.color = totalPnl >= 0 ? '#00e676' : '#ff5252';
+  const dayPct = (pendingReinvest / STARTING_BALANCE_REF) * 100;
+  dayMoneyEl.textContent = fmtMoney(pendingReinvest);
+  dayMoneyEl.style.color = pendingReinvest >= 0 ? '#00e676' : (pendingReinvest < 0 ? '#ff5252' : '#30363d');
   dayPctEl.textContent = fmtPct(dayPct);
-  dayPctEl.style.color = totalPnl >= 0 ? '#00e676' : '#ff5252';
+  dayPctEl.style.color = pendingReinvest >= 0 ? '#00e676' : (pendingReinvest < 0 ? '#ff5252' : '#30363d');
+
+  const reinvestBtn = document.getElementById('reinvest-btn');
+  reinvestBtn.disabled = (pendingReinvest === 0 || closed.length === 0);
 
   const openSection = document.getElementById('positions-section');
   const closeAllBtn = document.getElementById('close-all-btn');
@@ -301,31 +370,12 @@ function renderPositions(positions, balance){
           '<div><span class="pos-pair">'+sym+'/USDT</span><span class="pos-dir '+(p.direction==='LONG'?'long':'short')+'">'+p.direction+' '+p.leverage+'x</span></div>'+
           '<div class="pos-pnl '+pnlClass+'">'+fmtMoney(p.pnl_usd)+'</div>'+
         '</div>'+
-        '<div class="pos-detail">Вход: '+p.entry+' · Сейчас: '+(p.current_price||p.entry).toFixed(6)+' · '+fmtPct(p.pnl_pct||0)+' · $'+p.size+'</div>'+
+        '<div class="pos-detail">Вход: '+p.entry+' · Сейчас: '+(p.current_price||p.entry).toFixed(6)+' · '+fmtPct(p.pnl_pct||0)+' · $'+p.size.toLocaleString('en-US',{minimumFractionDigits:2})+'</div>'+
         '<button class="btn-close" onclick="closePosition('+p.id+')">✕ ЗАКРЫТЬ</button>'+
       '</div>';
     }).join('');
   } else {
     openSection.style.display='none';
-  }
-
-  const closedSection = document.getElementById('closed-section');
-  if(closed.length){
-    closedSection.style.display='block';
-    document.getElementById('closed-positions').innerHTML = closed.map(p=>{
-      const sym = p.symbol.replace('-USDT','');
-      const cls = p.result === 'WIN' ? 'win' : 'loss';
-      const pnlClass = p.pnl_usd >= 0 ? 'pos' : 'neg';
-      return '<div class="pos-card '+cls+'">'+
-        '<div class="pos-head">'+
-          '<div><span class="pos-pair">'+sym+'/USDT</span><span class="pos-dir '+(p.direction==='LONG'?'long':'short')+'">'+p.direction+'</span></div>'+
-          '<div class="pos-pnl '+pnlClass+'">'+fmtMoney(p.pnl_usd)+'</div>'+
-        '</div>'+
-        '<div class="pos-detail">'+(p.result==='WIN'?'✅ TP':'❌ SL')+' · Закрыто: '+p.closed_at+'</div>'+
-      '</div>';
-    }).join('');
-  } else {
-    closedSection.style.display='none';
   }
 }
 
@@ -354,7 +404,40 @@ async function fetchDemoState(){
     const r = await fetch('/demo/state');
     const d = await r.json();
     document.getElementById('balance').textContent = '$' + d.balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-    renderPositions(d.positions || [], d.balance);
+    lastSuggestedSize = d.suggested_size || 2000;
+    document.getElementById('size-hint').textContent = 'Размер на пару: $' + lastSuggestedSize.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' (1/5 депозита)';
+    renderPositions(d.positions || [], d.balance, d.pending_reinvest || 0);
+  }catch(e){}
+}
+
+async function fetchStats(){
+  try{
+    const r = await fetch('/demo/stats');
+    const d = await r.json();
+    if(!d.trades){
+      document.getElementById('st-trades').textContent = '0';
+      document.getElementById('journal-table').innerHTML = '<div class="empty-journal">Пока нет закрытых сделок</div>';
+      return;
+    }
+    document.getElementById('st-trades').textContent = d.trades;
+    document.getElementById('st-winrate').textContent = d.winrate + '%';
+    document.getElementById('st-wins').textContent = d.wins;
+    document.getElementById('st-losses').textContent = d.losses;
+    const pnlEl = document.getElementById('st-pnl');
+    pnlEl.textContent = fmtMoney(d.total_pnl);
+    pnlEl.className = 'stat-val ' + (d.total_pnl >= 0 ? 'green' : 'red');
+    document.getElementById('st-avgwin').textContent = fmtMoney(d.avg_win);
+
+    const jr = await fetch('/demo/journal');
+    const jd = await jr.json();
+    const trades = (jd.journal || []).slice(-30).reverse();
+    let html = '<div class="jt-row header"><div>ПАРА</div><div>P&L</div><div>%</div><div>ДАТА</div></div>';
+    html += trades.map(t=>{
+      const sym = t.symbol.replace('-USDT','');
+      const pnlClass = t.pnl_usd >= 0 ? 'pos' : 'neg';
+      return '<div class="jt-row"><div class="jt-pair">'+sym+' <span style="color:#455a64;font-size:8px">'+t.direction+'</span></div><div class="jt-pnl '+pnlClass+'">'+fmtMoney(t.pnl_usd)+'</div><div class="jt-pnl '+pnlClass+'">'+fmtPct(t.pnl_pct)+'</div><div style="color:#455a64">'+t.closed_at+'</div></div>';
+    }).join('');
+    document.getElementById('journal-table').innerHTML = html;
   }catch(e){}
 }
 
