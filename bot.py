@@ -98,6 +98,8 @@ state = {
     "demo_journal": [],      # full trade history log for analysis
     "demo_pending_reinvest": 0.0,  # accumulated daily PnL not yet reinvested
     "last_session_snapshot": None,  # snapshot of journal+balance at last daily reset
+    "session_size": 2000.0,  # fixed size per pair for current session, set once when session starts
+    "session_start_balance": 10000.0,  # balance at the moment current session began
 }
 
 PAIRS = []
@@ -338,7 +340,9 @@ def start_new_session():
                 log.error(f"start_new_session close error: {e}")
     state["demo_pending_reinvest"] = 0.0
     state["demo_positions"] = [p for p in state["demo_positions"] if p["status"] == "open"]
-    log.info(f"New session started, balance reinvested: ${state['demo_balance']:.2f}")
+    state["session_size"] = round(state["demo_balance"] / 5, 2)
+    state["session_start_balance"] = state["demo_balance"]
+    log.info(f"New session started, balance reinvested: ${state['demo_balance']:.2f}, session_size=${state['session_size']:.2f}")
 
 def send_top5(now):
     start_new_session()
@@ -611,13 +615,13 @@ def demo_reinvest():
 @app.route("/demo/state")
 def demo_state():
     open_positions = [p for p in state["demo_positions"] if p["status"] == "open"]
-    n_open = len(open_positions)
-    suggested_size = round(state["demo_balance"] / 5, 2) if n_open == 0 else round(state["demo_balance"] / max(n_open, 1), 2)
+    suggested_size = round(state["session_size"], 2)
     return jsonify({
         "balance": round(state["demo_balance"], 2),
         "positions": state["demo_positions"],
         "pending_reinvest": round(state["demo_pending_reinvest"], 2),
         "suggested_size": suggested_size,
+        "session_start_balance": round(state["session_start_balance"], 2),
     })
 
 @app.route("/demo/journal")
