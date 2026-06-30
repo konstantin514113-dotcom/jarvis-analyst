@@ -130,7 +130,10 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 <body>
 <div class="header">
   <div class="title">JARVIS</div>
-  <div class="live"><div class="dot" id="dot" style="background:#ffea00"></div><span id="st" style="color:#ffea00;font-size:10px">LOADING</span></div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <div class="live"><div class="dot" id="dot" style="background:#ffea00"></div><span id="st" style="color:#ffea00;font-size:10px">LOADING</span></div>
+    <button id="rescan-btn" onclick="forceRescan()" style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:5px 10px;font-size:9px;color:#58a6ff;font-family:'JetBrains Mono',monospace;cursor:pointer">↻ ПЕРЕСКАН</button>
+  </div>
 </div>
 <div class="timer">след. скан через <span id="tmr">—</span></div>
 
@@ -186,6 +189,16 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
     <div class="stat-box"><div class="stat-label">СРЕДНИЙ ВЫИГРЫШ</div><div class="stat-val green" id="st-avgwin">$0.00</div></div>
   </div>
 
+  <div class="section-title" style="padding-left:16px;margin-top:14px">ПО ПАРАМ</div>
+  <div class="journal-table" id="by-symbol-table">
+    <div class="empty-journal">Нет данных</div>
+  </div>
+
+  <div class="section-title" style="padding-left:16px;margin-top:14px">ПО ДНЯМ</div>
+  <div class="journal-table" id="by-date-table">
+    <div class="empty-journal">Нет данных</div>
+  </div>
+
   <div class="section-title" style="padding-left:16px;margin-top:14px">ИСТОРИЯ СДЕЛОК</div>
   <div class="journal-table" id="journal-table">
     <div class="empty-journal">Пока нет закрытых сделок</div>
@@ -195,6 +208,43 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 <script>
 const STARTING_BALANCE_REF = 10000;
 const cardConfig = {};
+
+async function forceRescan(){
+  const btn = document.getElementById('rescan-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ ИЩЕМ...';
+  btn.style.color = '#ffea00';
+  try{
+    await fetch('/force-scan');
+    let attempts = 0;
+    const poll = setInterval(async ()=>{
+      attempts++;
+      try{
+        const r = await fetch('/status');
+        const d = await r.json();
+        if(d.status === 'force_scan_sent'){
+          clearInterval(poll);
+          btn.textContent = '✅ НАЙДЕНО';
+          btn.style.color = '#00e676';
+          fetchData();
+          setTimeout(()=>{btn.disabled=false; btn.textContent='↻ ПЕРЕСКАН'; btn.style.color='#58a6ff';}, 3000);
+        } else if(d.status === 'force_scan_no_candidates'){
+          clearInterval(poll);
+          btn.textContent = '✕ НЕ НАЙДЕНО';
+          btn.style.color = '#ff5252';
+          setTimeout(()=>{btn.disabled=false; btn.textContent='↻ ПЕРЕСКАН'; btn.style.color='#58a6ff';}, 3000);
+        } else if(attempts > 60){
+          clearInterval(poll);
+          btn.disabled=false; btn.textContent='↻ ПЕРЕСКАН'; btn.style.color='#58a6ff';
+        }
+      }catch(e){}
+    }, 10000);
+  }catch(e){
+    btn.disabled = false;
+    btn.textContent = '↻ ПЕРЕСКАН';
+    btn.style.color = '#58a6ff';
+  }
+}
 
 function switchTab(tab){
   document.getElementById('tab-trade').classList.toggle('active', tab==='trade');
@@ -438,6 +488,32 @@ async function fetchStats(){
       return '<div class="jt-row"><div class="jt-pair">'+sym+' <span style="color:#455a64;font-size:8px">'+t.direction+'</span></div><div class="jt-pnl '+pnlClass+'">'+fmtMoney(t.pnl_usd)+'</div><div class="jt-pnl '+pnlClass+'">'+fmtPct(t.pnl_pct)+'</div><div style="color:#455a64">'+t.closed_at+'</div></div>';
     }).join('');
     document.getElementById('journal-table').innerHTML = html;
+
+    // By symbol breakdown
+    const bySym = d.by_symbol || {};
+    const symEntries = Object.entries(bySym).sort((a,b)=>b[1].pnl-a[1].pnl);
+    if(symEntries.length){
+      let symHtml = '<div class="jt-row header"><div>ПАРА</div><div>СДЕЛОК</div><div>ВИНРЕЙТ</div><div>P&L</div></div>';
+      symHtml += symEntries.map(([sym,s])=>{
+        const wr = s.trades ? Math.round(s.wins/s.trades*100) : 0;
+        const pnlClass = s.pnl >= 0 ? 'pos' : 'neg';
+        return '<div class="jt-row"><div class="jt-pair">'+sym.replace('-USDT','')+'</div><div>'+s.trades+'</div><div>'+wr+'%</div><div class="jt-pnl '+pnlClass+'">'+fmtMoney(s.pnl)+'</div></div>';
+      }).join('');
+      document.getElementById('by-symbol-table').innerHTML = symHtml;
+    }
+
+    // By date breakdown
+    const byDate = d.by_date || {};
+    const dateEntries = Object.entries(byDate).sort((a,b)=>b[0].localeCompare(a[0]));
+    if(dateEntries.length){
+      let dateHtml = '<div class="jt-row header"><div>ДАТА</div><div>СДЕЛОК</div><div>ВИНРЕЙТ</div><div>P&L</div></div>';
+      dateHtml += dateEntries.map(([date,s])=>{
+        const wr = s.trades ? Math.round(s.wins/s.trades*100) : 0;
+        const pnlClass = s.pnl >= 0 ? 'pos' : 'neg';
+        return '<div class="jt-row"><div class="jt-pair">'+date+'</div><div>'+s.trades+'</div><div>'+wr+'%</div><div class="jt-pnl '+pnlClass+'">'+fmtMoney(s.pnl)+'</div></div>';
+      }).join('');
+      document.getElementById('by-date-table').innerHTML = dateHtml;
+    }
   }catch(e){}
 }
 
