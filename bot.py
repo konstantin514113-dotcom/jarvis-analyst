@@ -218,7 +218,7 @@ def analyze_pair(symbol):
     score += 10 if above_ma else 0
     score += 10 if dist>1 else 0
     score += 20
-    if score < 75: return None
+    if score < 89: return None
     return {**t,"rsi":rsi15,"rsi_1h":rsi1h,"macd":macd15,"macd_1h":macd1h,
             "htf_bullish":True,"above_ma20":above_ma,"dist_from_high":round(dist,2),"score":round(score,1)}
 
