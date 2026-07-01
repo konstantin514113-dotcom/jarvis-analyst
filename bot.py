@@ -433,13 +433,12 @@ def main():
     log.info("JARVIS ANALYST v3 starting...")
     load_persistent_state()
     load_pairs()
-    tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Сигнал в 13:00 UTC\nКаждые {INTERVAL_MIN} мин")
+    tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Только по команде ПЕРЕСКАН")
     time.sleep(10)
     threading.Thread(target=price_monitor, daemon=True).start()
+    # No automatic scanning — signals only via /force-scan (ПЕРЕСКАН button)
     while True:
-        try: run_cycle()
-        except Exception as e: log.error(f"Main error: {e}")
-        time.sleep(INTERVAL_MIN*60)
+        time.sleep(60)
 
 app = Flask(__name__)
 
