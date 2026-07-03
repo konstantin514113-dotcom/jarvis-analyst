@@ -1,4 +1,5 @@
 import os, time, json, logging, requests, threading
+import websocket
 from datetime import datetime, timezone
 from anthropic import Anthropic
 from flask import Flask, Response, jsonify
@@ -293,53 +294,14 @@ def _log_journal_entry_impl(p):
 TRAIL_PCT = 0.8  # trailing stop distance in % below peak
 
 def update_demo_positions():
-    for p in state["demo_positions"]:
-        if p["status"] != "open": continue
+    """Fallback polling — called only if WebSocket is down."""
+    open_positions = [p for p in state["demo_positions"] if p["status"] == "open"]
+    if not open_positions: return
+    for p in open_positions:
         try:
             t = get_ticker(p["symbol"])
-            if not t: continue
-            price = t["price"]
-            p["current_price"] = price
-
-            # === TRAILING STOP LOGIC ===
-            if p["direction"] == "LONG":
-                # Track peak price
-                peak = p.get("peak_price", p["entry"])
-                if price > peak:
-                    peak = price
-                    p["peak_price"] = peak
-                    # Move SL up to trail_pct% below new peak
-                    new_sl = round(peak * (1 - TRAIL_PCT/100), 8)
-                    if new_sl > p["stop_loss"]:
-                        p["stop_loss"] = new_sl
-                        p["trailing"] = True
-            else:  # SHORT
-                trough = p.get("trough_price", p["entry"])
-                if price < trough:
-                    trough = price
-                    p["trough_price"] = trough
-                    new_sl = round(trough * (1 + TRAIL_PCT/100), 8)
-                    if new_sl < p["stop_loss"]:
-                        p["stop_loss"] = new_sl
-                        p["trailing"] = True
-
-            if p["direction"] == "LONG":
-                pnl_pct = (price - p["entry"]) / p["entry"]
-            else:
-                pnl_pct = (p["entry"] - price) / p["entry"]
-            pnl_pct *= p["leverage"]
-            p["pnl_pct"] = round(pnl_pct * 100, 2)
-            p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
-
-            hit_tp = (p["direction"]=="LONG" and price >= p["take_profit"]) or (p["direction"]=="SHORT" and price <= p["take_profit"])
-            hit_sl = (p["direction"]=="LONG" and price <= p["stop_loss"]) or (p["direction"]=="SHORT" and price >= p["stop_loss"])
-            if hit_tp or hit_sl:
-                p["status"] = "closed"
-                p["result"] = "WIN" if hit_tp else "LOSS"
-                p["close_price"] = price
-                p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
-                state["demo_balance"] += p["pnl_usd"]
-                log_journal_entry(p)
+            if t:
+                check_position_for_symbol(p["symbol"], t["price"])
         except: pass
 
 def start_new_session():
@@ -449,11 +411,113 @@ def run_cycle():
     except Exception as e:
         log.error(f"Cycle error: {e}", exc_info=True)
 
-def price_monitor():
-    while True:
-        time.sleep(30)
-        try: update_history()
+# WebSocket price feed for near-realtime SL/TP monitoring
+_ws_prices = {}  # symbol -> latest price
+_ws_lock = threading.Lock()
+
+def on_ws_message(ws, message):
+    try:
+        data = json.loads(message)
+        if data.get("event"): return  # skip subscribe confirmations
+        for item in data.get("data", []):
+            inst_id = item.get("instId","")
+            last = float(item.get("last", 0))
+            if inst_id and last > 0:
+                with _ws_lock:
+                    _ws_prices[inst_id] = last
+                # Check positions for this symbol immediately
+                check_position_for_symbol(inst_id, last)
+    except: pass
+
+def on_ws_error(ws, error):
+    log.error(f"WebSocket error: {error}")
+
+def on_ws_close(ws, *args):
+    log.warning("WebSocket closed, will reconnect...")
+
+def on_ws_open(ws):
+    symbols = list({p["symbol"] for p in state["demo_positions"] if p["status"] == "open"})
+    if not symbols:
+        symbols = ["BTC-USDT"]  # default subscription to keep connection alive
+    args = [{"channel": "tickers", "instId": s} for s in symbols]
+    ws.send(json.dumps({"op": "subscribe", "args": args}))
+    log.info(f"WebSocket subscribed to: {symbols}")
+
+def check_position_for_symbol(symbol, price):
+    for p in state["demo_positions"]:
+        if p["status"] != "open" or p["symbol"] != symbol: continue
+        try:
+            p["current_price"] = price
+            # Trailing stop
+            if p["direction"] == "LONG":
+                peak = p.get("peak_price", p["entry"])
+                if price > peak:
+                    peak = price
+                    p["peak_price"] = peak
+                    new_sl = round(peak * (1 - TRAIL_PCT/100), 8)
+                    if new_sl > p["stop_loss"]:
+                        p["stop_loss"] = new_sl
+                        p["trailing"] = True
+                pnl_pct = (price - p["entry"]) / p["entry"]
+            else:
+                trough = p.get("trough_price", p["entry"])
+                if price < trough:
+                    trough = price
+                    p["trough_price"] = trough
+                    new_sl = round(trough * (1 + TRAIL_PCT/100), 8)
+                    if new_sl < p["stop_loss"]:
+                        p["stop_loss"] = new_sl
+                        p["trailing"] = True
+                pnl_pct = (p["entry"] - price) / p["entry"]
+            pnl_pct *= p["leverage"]
+            p["pnl_pct"] = round(pnl_pct * 100, 2)
+            p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+            hit_tp = (p["direction"]=="LONG" and price >= p["take_profit"]) or (p["direction"]=="SHORT" and price <= p["take_profit"])
+            hit_sl = (p["direction"]=="LONG" and price <= p["stop_loss"]) or (p["direction"]=="SHORT" and price >= p["stop_loss"])
+            if hit_tp or hit_sl:
+                p["status"] = "closed"
+                p["result"] = "WIN" if hit_tp else "LOSS"
+                p["close_price"] = price
+                p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+                state["demo_balance"] += p["pnl_usd"]
+                log_journal_entry(p)
+                log.info(f"Position closed: {symbol} {p['result']} {p['pnl_usd']:+.2f}$")
+                # Resubscribe with updated symbols
+                resubscribe_ws()
+        except Exception as e:
+            log.error(f"check_position error {symbol}: {e}")
+
+_ws_instance = None
+
+def resubscribe_ws():
+    global _ws_instance
+    if _ws_instance:
+        try:
+            symbols = list({p["symbol"] for p in state["demo_positions"] if p["status"] == "open"})
+            if not symbols: symbols = ["BTC-USDT"]
+            args = [{"channel": "tickers", "instId": s} for s in symbols]
+            _ws_instance.send(json.dumps({"op": "subscribe", "args": args}))
         except: pass
+
+def price_monitor():
+    global _ws_instance
+    OKX_WS = "wss://ws.okx.com:8443/ws/v5/public"
+    while True:
+        try:
+            log.info("Starting WebSocket price feed...")
+            ws = websocket.WebSocketApp(
+                OKX_WS,
+                on_open=on_ws_open,
+                on_message=on_ws_message,
+                on_error=on_ws_error,
+                on_close=on_ws_close,
+            )
+            _ws_instance = ws
+            ws.run_forever(ping_interval=20, ping_timeout=10)
+        except Exception as e:
+            log.error(f"WebSocket crashed: {e}")
+        log.warning("WebSocket reconnecting in 5s...")
+        time.sleep(5)
 
 def main():
     log.info("JARVIS ANALYST v3 starting...")
