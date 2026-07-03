@@ -451,7 +451,7 @@ def run_cycle():
 
 def price_monitor():
     while True:
-        time.sleep(120)
+        time.sleep(30)
         try: update_history()
         except: pass
 
