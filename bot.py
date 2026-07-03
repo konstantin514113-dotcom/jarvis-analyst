@@ -290,6 +290,8 @@ def _log_journal_entry_impl(p):
     })
     state["demo_pending_reinvest"] += p.get("pnl_usd", 0)
 
+TRAIL_PCT = 0.8  # trailing stop distance in % below peak
+
 def update_demo_positions():
     for p in state["demo_positions"]:
         if p["status"] != "open": continue
@@ -298,6 +300,29 @@ def update_demo_positions():
             if not t: continue
             price = t["price"]
             p["current_price"] = price
+
+            # === TRAILING STOP LOGIC ===
+            if p["direction"] == "LONG":
+                # Track peak price
+                peak = p.get("peak_price", p["entry"])
+                if price > peak:
+                    peak = price
+                    p["peak_price"] = peak
+                    # Move SL up to trail_pct% below new peak
+                    new_sl = round(peak * (1 - TRAIL_PCT/100), 8)
+                    if new_sl > p["stop_loss"]:
+                        p["stop_loss"] = new_sl
+                        p["trailing"] = True
+            else:  # SHORT
+                trough = p.get("trough_price", p["entry"])
+                if price < trough:
+                    trough = price
+                    p["trough_price"] = trough
+                    new_sl = round(trough * (1 + TRAIL_PCT/100), 8)
+                    if new_sl < p["stop_loss"]:
+                        p["stop_loss"] = new_sl
+                        p["trailing"] = True
+
             if p["direction"] == "LONG":
                 pnl_pct = (price - p["entry"]) / p["entry"]
             else:
@@ -305,6 +330,7 @@ def update_demo_positions():
             pnl_pct *= p["leverage"]
             p["pnl_pct"] = round(pnl_pct * 100, 2)
             p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+
             hit_tp = (p["direction"]=="LONG" and price >= p["take_profit"]) or (p["direction"]=="SHORT" and price <= p["take_profit"])
             hit_sl = (p["direction"]=="LONG" and price <= p["stop_loss"]) or (p["direction"]=="SHORT" and price >= p["stop_loss"])
             if hit_tp or hit_sl:
