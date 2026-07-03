@@ -415,6 +415,7 @@ function renderPositions(positions, balance, pendingReinvest, sessionStartBalanc
         '</div>'+
         '<div class="pos-detail">Вход: '+p.entry+' · Сейчас: '+(p.current_price||p.entry).toFixed(6)+' · '+fmtPct(p.pnl_pct||0)+'</div>'+
         '<div class="pos-detail" style="margin-top:3px">SL: <span style="color:#ff5252">'+p.stop_loss.toFixed(6)+'</span>'+(p.trailing?' <span style="color:#ffea00">⟳ трейлинг</span>':'')+' · TP: <span style="color:#00e676">'+p.take_profit.toFixed(6)+'</span></div>'+
+        (p.partial_closed ? '<div class="pos-detail" style="margin-top:3px;color:#58a6ff">✂ 50% закрыто в +'+(p.partial_pnl||0).toFixed(2)+'$ · SL → безубыток</div>' : '')+
         '<button class="btn-close" onclick="closePosition('+p.id+')">✕ ЗАКРЫТЬ</button>'+
       '</div>';
     }).join('');
