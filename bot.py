@@ -1,5 +1,4 @@
 import os, time, json, logging, requests, threading
-import websocket
 from datetime import datetime, timezone
 from anthropic import Anthropic
 from flask import Flask, Response, jsonify
@@ -411,37 +410,7 @@ def run_cycle():
     except Exception as e:
         log.error(f"Cycle error: {e}", exc_info=True)
 
-# WebSocket price feed for near-realtime SL/TP monitoring
-_ws_prices = {}  # symbol -> latest price
-_ws_lock = threading.Lock()
-
-def on_ws_message(ws, message):
-    try:
-        data = json.loads(message)
-        if data.get("event"): return  # skip subscribe confirmations
-        for item in data.get("data", []):
-            inst_id = item.get("instId","")
-            last = float(item.get("last", 0))
-            if inst_id and last > 0:
-                with _ws_lock:
-                    _ws_prices[inst_id] = last
-                # Check positions for this symbol immediately
-                check_position_for_symbol(inst_id, last)
-    except: pass
-
-def on_ws_error(ws, error):
-    log.error(f"WebSocket error: {error}")
-
-def on_ws_close(ws, *args):
-    log.warning("WebSocket closed, will reconnect...")
-
-def on_ws_open(ws):
-    symbols = list({p["symbol"] for p in state["demo_positions"] if p["status"] == "open"})
-    if not symbols:
-        symbols = ["BTC-USDT"]  # default subscription to keep connection alive
-    args = [{"channel": "tickers", "instId": s} for s in symbols]
-    ws.send(json.dumps({"op": "subscribe", "args": args}))
-    log.info(f"WebSocket subscribed to: {symbols}")
+# Fast polling for open positions (5 second interval)
 
 PARTIAL_CLOSE_PCT   = 1.5   # trigger partial close at +1.5%
 PARTIAL_CLOSE_RATIO = 0.5   # close 50% of position
@@ -507,37 +476,23 @@ def check_position_for_symbol(symbol, price):
         except Exception as e:
             log.error(f"check_position error {symbol}: {e}")
 
-_ws_instance = None
-
 def resubscribe_ws():
-    global _ws_instance
-    if _ws_instance:
-        try:
-            symbols = list({p["symbol"] for p in state["demo_positions"] if p["status"] == "open"})
-            if not symbols: symbols = ["BTC-USDT"]
-            args = [{"channel": "tickers", "instId": s} for s in symbols]
-            _ws_instance.send(json.dumps({"op": "subscribe", "args": args}))
-        except: pass
+    pass  # no-op, kept for compatibility
 
 def price_monitor():
-    global _ws_instance
-    OKX_WS = "wss://ws.okx.com:8443/ws/v5/public"
+    """Fast polling every 5 seconds for open positions only."""
+    log.info("Price monitor started (5s polling for open positions)")
     while True:
-        try:
-            log.info("Starting WebSocket price feed...")
-            ws = websocket.WebSocketApp(
-                OKX_WS,
-                on_open=on_ws_open,
-                on_message=on_ws_message,
-                on_error=on_ws_error,
-                on_close=on_ws_close,
-            )
-            _ws_instance = ws
-            ws.run_forever(ping_interval=20, ping_timeout=10)
-        except Exception as e:
-            log.error(f"WebSocket crashed: {e}")
-        log.warning("WebSocket reconnecting in 5s...")
         time.sleep(5)
+        try:
+            open_pos = [p for p in state["demo_positions"] if p["status"] == "open"]
+            for p in open_pos:
+                try:
+                    t = get_ticker(p["symbol"])
+                    if t:
+                        check_position_for_symbol(p["symbol"], t["price"])
+                except: pass
+        except: pass
 
 def main():
     log.info("JARVIS ANALYST v3 starting...")
