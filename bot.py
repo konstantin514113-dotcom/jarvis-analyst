@@ -480,8 +480,8 @@ def force_scan():
             for p in pairs:
                 e = p.get("entry", 0)
                 if e > 0:
-                    p["stop_loss"] = round(e * 0.985, 8)
-                    p["take_profit"] = round(e * 1.035, 8)
+                    p["stop_loss"] = round(e * 0.992, 8)
+                    p["take_profit"] = round(e * 1.025, 8)
             now = datetime.now(timezone.utc)
             scan_time = now.strftime("%H:%M UTC")
             start_new_session()
