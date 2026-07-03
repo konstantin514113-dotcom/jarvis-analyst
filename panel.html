@@ -343,7 +343,13 @@ function renderCards(sigs){
     return;
   }
   const perPairSize = lastSuggestedSize;
+  // Sort by score to determine LONG/SHORT recommendations
+  const sorted = [...sigs].sort((a,b)=>b.score-a.score);
+  const longSymbols = new Set(sorted.slice(0,3).map(s=>s.symbol));
+  const shortSymbols = new Set(sorted.slice(-2).map(s=>s.symbol));
   document.getElementById('cards').innerHTML = sigs.map((s,i)=>{
+    const isLongRec = longSymbols.has(s.symbol);
+    const isShortRec = shortSymbols.has(s.symbol);
     const sym=s.symbol.replace('-USDT','');
     const safeId = s.symbol.replace(/[^a-zA-Z0-9]/g,'');
     const rc=['r1','r2','r3','r4','r5'][i] || 'r5';
