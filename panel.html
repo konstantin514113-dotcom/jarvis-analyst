@@ -413,7 +413,8 @@ function renderPositions(positions, balance, pendingReinvest, sessionStartBalanc
           '<div><span class="pos-pair">'+sym+'/USDT</span><span class="pos-dir '+(p.direction==='LONG'?'long':'short')+'">'+p.direction+' '+p.leverage+'x</span></div>'+
           '<div class="pos-pnl '+pnlClass+'">'+fmtMoney(p.pnl_usd)+'</div>'+
         '</div>'+
-        '<div class="pos-detail">Вход: '+p.entry+' · Сейчас: '+(p.current_price||p.entry).toFixed(6)+' · '+fmtPct(p.pnl_pct||0)+' · $'+p.size.toLocaleString('en-US',{minimumFractionDigits:2})+'</div>'+
+        '<div class="pos-detail">Вход: '+p.entry+' · Сейчас: '+(p.current_price||p.entry).toFixed(6)+' · '+fmtPct(p.pnl_pct||0)+'</div>'+
+        '<div class="pos-detail" style="margin-top:3px">SL: <span style="color:#ff5252">'+p.stop_loss.toFixed(6)+'</span>'+(p.trailing?' <span style="color:#ffea00">⟳ трейлинг</span>':'')+' · TP: <span style="color:#00e676">'+p.take_profit.toFixed(6)+'</span></div>'+
         '<button class="btn-close" onclick="closePosition('+p.id+')">✕ ЗАКРЫТЬ</button>'+
       '</div>';
     }).join('');
