@@ -443,12 +443,16 @@ def on_ws_open(ws):
     ws.send(json.dumps({"op": "subscribe", "args": args}))
     log.info(f"WebSocket subscribed to: {symbols}")
 
+PARTIAL_CLOSE_PCT   = 1.5   # trigger partial close at +1.5%
+PARTIAL_CLOSE_RATIO = 0.5   # close 50% of position
+
 def check_position_for_symbol(symbol, price):
     for p in state["demo_positions"]:
         if p["status"] != "open" or p["symbol"] != symbol: continue
         try:
             p["current_price"] = price
-            # Trailing stop
+
+            # === TRAILING STOP ===
             if p["direction"] == "LONG":
                 peak = p.get("peak_price", p["entry"])
                 if price > peak:
@@ -469,20 +473,36 @@ def check_position_for_symbol(symbol, price):
                         p["stop_loss"] = new_sl
                         p["trailing"] = True
                 pnl_pct = (p["entry"] - price) / p["entry"]
+
             pnl_pct *= p["leverage"]
             p["pnl_pct"] = round(pnl_pct * 100, 2)
             p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+
+            # === PARTIAL CLOSE at +1.5% ===
+            if not p.get("partial_closed") and pnl_pct * 100 >= PARTIAL_CLOSE_PCT:
+                partial_size = p["size"] * PARTIAL_CLOSE_RATIO
+                partial_pnl = round(partial_size * pnl_pct, 2)
+                state["demo_balance"] += partial_pnl
+                state["demo_pending_reinvest"] += partial_pnl
+                p["size"] = round(p["size"] * (1 - PARTIAL_CLOSE_RATIO), 2)
+                p["partial_closed"] = True
+                p["partial_pnl"] = partial_pnl
+                # Move SL to breakeven
+                p["stop_loss"] = p["entry"]
+                p["trailing"] = True
+                log.info(f"Partial close {symbol}: 50% at {pnl_pct*100:.2f}%, PnL={partial_pnl:+.2f}$, SL→breakeven")
+
+            # === SL / TP CHECK ===
             hit_tp = (p["direction"]=="LONG" and price >= p["take_profit"]) or (p["direction"]=="SHORT" and price <= p["take_profit"])
             hit_sl = (p["direction"]=="LONG" and price <= p["stop_loss"]) or (p["direction"]=="SHORT" and price >= p["stop_loss"])
             if hit_tp or hit_sl:
                 p["status"] = "closed"
-                p["result"] = "WIN" if hit_tp else "LOSS"
+                p["result"] = "WIN" if hit_tp else ("BREAKEVEN" if p.get("partial_closed") and p["pnl_usd"] >= 0 else "LOSS")
                 p["close_price"] = price
                 p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
                 state["demo_balance"] += p["pnl_usd"]
                 log_journal_entry(p)
-                log.info(f"Position closed: {symbol} {p['result']} {p['pnl_usd']:+.2f}$")
-                # Resubscribe with updated symbols
+                log.info(f"Position closed: {symbol} {p['result']} {p['pnl_usd']:+.2f}$ (partial: {p.get('partial_pnl',0):+.2f}$)")
                 resubscribe_ws()
         except Exception as e:
             log.error(f"check_position error {symbol}: {e}")
