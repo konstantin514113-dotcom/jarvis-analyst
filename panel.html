@@ -256,7 +256,7 @@ function switchTab(tab){
 
 function getConfig(symbol){
   if(!cardConfig[symbol]){
-    cardConfig[symbol] = {leverage: 1.25, slPct: 1.5, tpPct: 3.5};
+    cardConfig[symbol] = {leverage: 1.25, slPct: 0.8, tpPct: 2.5};
   }
   return cardConfig[symbol];
 }
