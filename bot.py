@@ -194,7 +194,8 @@ def get_candles(symbol, bar="15m", limit=30):
         r = requests.get(f"{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}", timeout=5)
         data = r.json().get("data",[])
         if not data: return None
-        return [{"c":float(c[4]),"v":float(c[5])} for c in reversed(data)]
+        return [{"ts":int(c[0]),"o":float(c[1]),"h":float(c[2]),"l":float(c[3]),
+                 "c":float(c[4]),"v":float(c[5])} for c in reversed(data)]
     except: return None
 
 # === LIQUIDITY / SPREAD FILTERS ===
@@ -244,7 +245,103 @@ def calc_ma(candles,period=20):
     if not candles or len(candles)<period: return None
     return sum(c["c"] for c in candles[-period:])/period
 
+# === EMA CROSSOVER SIGNAL (used in TOP5_ONLY mode instead of the RSI-neutral-zone filter) ===
+# Rationale: the old filter required RSI 45-65, which is a NEUTRAL zone — it doesn't
+# actually signal momentum or reversion, just excludes overbought/oversold. This likely
+# contributed to the ~3% backtest winrate. EMA9/21 crossover is a concrete, directional
+# event instead of a vague zone.
+EMA_FAST = 9
+EMA_SLOW = 21
+EMA_TREND_1H = 50
+VOL_CONFIRM_LOOKBACK = 20
+
+def calc_ema_series(closes, period):
+    if len(closes) < period: return []
+    k = 2/(period+1)
+    out = [closes[0]]
+    for c in closes[1:]:
+        out.append(c*k + out[-1]*(1-k))
+    return out
+
+def detect_ema_cross_up(candles):
+    """True if EMA9 crossed above EMA21 on the most recently completed 15m candle."""
+    if not candles or len(candles) < EMA_SLOW+2: return False
+    closes = [c["c"] for c in candles]
+    ema9 = calc_ema_series(closes, EMA_FAST)
+    ema21 = calc_ema_series(closes, EMA_SLOW)
+    if len(ema9) < 2 or len(ema21) < 2: return False
+    return ema9[-2] <= ema21[-2] and ema9[-1] > ema21[-1]
+
+def volume_confirmed(candles, lookback=VOL_CONFIRM_LOOKBACK):
+    """True if the crossover candle's volume exceeds the average of the prior `lookback` candles."""
+    if not candles or len(candles) < lookback+1: return False
+    vols = [c["v"] for c in candles]
+    avg = sum(vols[-lookback-1:-1]) / lookback
+    return vols[-1] > avg
+
+def calc_vwap(candles):
+    """Volume-weighted average price over the fetched window (rolling approximation,
+    not a strict midnight-UTC session reset — but captures the same 'fair value' concept
+    that professional scalpers use VWAP for)."""
+    if not candles: return None
+    num = sum(((c["h"]+c["l"]+c["c"])/3) * c["v"] for c in candles)
+    den = sum(c["v"] for c in candles)
+    return num/den if den > 0 else None
+
+# === FUNDING RATE FILTER (perpetual futures sentiment, used as context for spot entries) ===
+# Extremely positive funding = market is crowded long / overheated (risk of long squeeze on
+# a pullback). Extremely negative = crowded short (often precedes relief rallies, and is at
+# least not a headwind for a LONG entry). We only use it to AVOID entering into overheated
+# long positioning, not as a standalone signal.
+FUNDING_RATE_MAX_PCT = 0.05  # reject LONG entries if funding > 0.05% per 8h (~55% annualized) — crowded longs
+
+def get_funding_rate(symbol):
+    """symbol is spot format e.g. BTC-USDT; perpetual swap instId on OKX is BTC-USDT-SWAP."""
+    try:
+        swap_id = symbol.replace("-USDT", "-USDT-SWAP")
+        r = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate?instId={swap_id}", timeout=5)
+        data = r.json().get("data", [{}])
+        if not data: return None
+        return float(data[0].get("fundingRate", 0)) * 100  # as percent
+    except Exception:
+        return None
+
+def analyze_pair_ema(symbol):
+    """EMA9/21 crossover + volume confirmation + 1H trend filter + VWAP confluence.
+    This mirrors what real crypto scalpers document using on BTC/ETH/SOL/XRP: no single
+    indicator alone (EMA cross by itself is noisy), but EMA cross + volume + VWAP + higher
+    timeframe trend agreeing together — 'confluence', in trader terms."""
+    t = get_ticker(symbol)
+    if not t or t["vol24h"] < MIN_VOL_24H_USDT: return None
+    c15 = get_candles(symbol, "15m", 40)
+    c1h = get_candles(symbol, "1H", 60)  # need enough bars for EMA50
+    if not c15 or not c1h: return None
+    if not detect_ema_cross_up(c15): return None
+    if not volume_confirmed(c15): return None
+    vwap = calc_vwap(c15)
+    if vwap is None or t["price"] <= vwap: return None  # must be trading above fair value (bullish bias)
+    closes1h = [c["c"] for c in c1h]
+    ema50_1h = calc_ema_series(closes1h, EMA_TREND_1H)
+    if not ema50_1h: return None
+    if t["price"] <= ema50_1h[-1]: return None  # must be above 1H trend
+    funding = get_funding_rate(symbol)
+    if funding is not None and funding > FUNDING_RATE_MAX_PCT:
+        log.info(f"{symbol}: EMA/VWAP/trend all confirmed but REJECTED — funding rate {funding:.4f}% "
+                 f"too high (crowded longs, long-squeeze risk)")
+        return None
+    ob = get_orderbook(symbol)
+    if not ob or ob["spread_pct"] > SPREAD_MAX_PCT or ob["depth_usd"] < MIN_ORDERBOOK_DEPTH_USD:
+        log.info(f"{symbol}: EMA cross fired but REJECTED on liquidity "
+                 f"(spread={ob['spread_pct'] if ob else 'N/A'}%, depth=${ob['depth_usd'] if ob else 'N/A'})")
+        return None
+    log.info(f"{symbol}: EMA9x21 cross UP + volume + VWAP + 1H trend + funding OK — signal fired")
+    return {**t, "signal": "EMA9x21_cross_up_vwap_funding_confluence", "volume_confirmed": True,
+            "trend_1h_ok": True, "vwap": round(vwap, 6), "funding_rate_pct": funding, "score": 95.0,
+            "spread_pct": ob["spread_pct"], "depth_usd": ob["depth_usd"]}
+
 def analyze_pair(symbol):
+    if TOP5_ONLY:
+        return analyze_pair_ema(symbol)
     t = get_ticker(symbol)
     if not t or t["vol24h"] < MIN_VOL_24H_USDT: return None
     c15 = get_candles(symbol,"15m",30)
