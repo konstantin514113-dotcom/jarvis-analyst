@@ -381,8 +381,8 @@ function renderCards(sigs){
         '<div class="sltp-box"><div class="sltp-label">TP %</div><input class="sltp-input tp" type="number" step="0.1" value="'+cfg.tpPct+'" onchange="updateTpPct(\''+s.symbol+'\',this.value,'+s.entry+')"></div>'+
       '</div>'+
       '<div class="btns">'+
-        '<button class="btn-long" onclick="openDemo(\''+s.symbol+'\',\'LONG\','+s.entry+')">▲ LONG (DEMO)</button>'+
-        '<button class="btn-short" onclick="openDemo(\''+s.symbol+'\',\'SHORT\','+s.entry+')">▼ SHORT (DEMO)</button>'+
+        '<button class="btn-long" style="'+(isLongRec?'box-shadow:0 0 16px #00e676;border:2px solid #00e676':'opacity:0.5')+'" onclick="openDemo(\''+s.symbol+'\',\'LONG\','+s.entry+')">'+(isLongRec?'▲ LONG ✦ СИГНАЛ':'▲ LONG')+'</button>'+
+        '<button class="btn-short" style="'+(isShortRec?'box-shadow:0 0 16px #ff1744;border:2px solid #ff1744':'opacity:0.5')+'" onclick="openDemo(\''+s.symbol+'\',\'SHORT\','+s.entry+')">'+(isShortRec?'▼ SHORT ✦ СИГНАЛ':'▼ SHORT')+'</button>'+
       '</div>'+
       '<div class="btn-row2">'+
         '<button class="btn-trade" onclick="trade(\''+s.symbol+'\')">OKX</button>'+
