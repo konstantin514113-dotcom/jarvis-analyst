@@ -121,6 +121,12 @@ def calc_fee(notional, maker=False):
 
 PAIRS = []
 
+# === Pair selection mode ===
+# TOP5_ONLY=true (default): trade only the 5 most liquid/stable pairs below.
+# Set env var TOP5_ONLY=false to go back to scanning the full ~300-pair universe.
+TOP5_PAIRS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "LTC-USDT"]
+TOP5_ONLY = os.environ.get("TOP5_ONLY", "true").lower() == "true"
+
 SCREEN_PROMPT = """You are a crypto momentum analyst for OKX spot market.
 Select TOP 5 pairs most likely to rise in next 60 minutes.
 Data: price, change24h, volume, RSI14(15m), RSI14(1H), MACD(15m), MACD(1H), htf_confirmed, above_MA20, dist_high, score.
@@ -137,6 +143,11 @@ def tg(msg):
 
 def load_pairs():
     global PAIRS
+    if TOP5_ONLY:
+        PAIRS = TOP5_PAIRS.copy()
+        state["pairs_loaded"] = len(PAIRS)
+        log.info(f"TOP5_ONLY mode: trading only {PAIRS}")
+        return
     MAX_PAIRS = 300
     base = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT",
             "AVAX-USDT","LINK-USDT","DOT-USDT","SUI-USDT","APT-USDT","ARB-USDT","OP-USDT",
