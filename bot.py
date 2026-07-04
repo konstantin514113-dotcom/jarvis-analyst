@@ -6,6 +6,7 @@ from flask import Flask, Response, jsonify
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "konstantin514113-dotcom/jarvis-analyst")
 STATE_FILE_PATH = "demo_state.json"
+STATE_BRANCH = "state-storage"  # separate branch so Railway does not redeploy on state saves
 LOCAL_STATE_FILE = "/tmp/demo_state.json"
 
 def save_persistent_state():
@@ -23,11 +24,11 @@ def save_persistent_state():
         if GITHUB_TOKEN:
             content_b64 = __import__("base64").b64encode(json.dumps(snapshot).encode()).decode()
             r = requests.get(
-                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATE_FILE_PATH}",
+                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATE_FILE_PATH}?ref={STATE_BRANCH}",
                 headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=10
             )
             sha = r.json().get("sha") if r.status_code == 200 else None
-            payload = {"message": "Update demo state", "content": content_b64}
+            payload = {"message": "Update demo state", "content": content_b64, "branch": STATE_BRANCH}
             if sha:
                 payload["sha"] = sha
             requests.put(
@@ -42,7 +43,7 @@ def load_persistent_state():
     try:
         if GITHUB_TOKEN:
             r = requests.get(
-                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATE_FILE_PATH}",
+                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATE_FILE_PATH}?ref={STATE_BRANCH}",
                 headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=10
             )
             if r.status_code == 200:
