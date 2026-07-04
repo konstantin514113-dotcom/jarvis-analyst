@@ -155,6 +155,11 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
   </div>
 </div>
 
+<div id="halt-banner" style="display:none;margin:8px 12px;background:linear-gradient(135deg,#ff1744,#d50000);border-radius:12px;padding:14px 16px;text-align:center">
+  <div style="font-size:13px;font-weight:700;color:#fff;letter-spacing:1px">⛔ ТОРГОВЛЯ ОСТАНОВЛЕНА</div>
+  <div id="halt-reason" style="font-size:10px;color:#ffcccc;margin-top:4px"></div>
+</div>
+
 <div class="day-result">
   <div class="day-row">
     <div class="day-label">ИТОГ СЕССИИ</div>
@@ -455,6 +460,14 @@ async function fetchDemoState(){
     const r = await fetch('/demo/state');
     const d = await r.json();
     document.getElementById('balance').textContent = '$' + d.balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    // Halt banner
+    const haltBanner = document.getElementById('halt-banner');
+    if(d.trading_halted){
+      haltBanner.style.display = 'block';
+      document.getElementById('halt-reason').textContent = (d.halt_reason||'') + ' · Дневной P&L: ' + (d.day_pnl_pct||0).toFixed(1) + '%';
+    } else {
+      haltBanner.style.display = 'none';
+    }
     lastSuggestedSize = d.suggested_size || 2000;
     document.getElementById('size-hint').textContent = 'Размер на пару: $' + lastSuggestedSize.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' (1/5 депозита)';
     renderPositions(d.positions || [], d.balance, d.pending_reinvest || 0, d.session_start_balance || d.balance);
