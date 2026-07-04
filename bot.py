@@ -101,6 +101,10 @@ state = {
     "last_session_snapshot": None,  # snapshot of journal+balance at last daily reset
     "session_size": 2000.0,  # fixed size per pair for current session, set once when session starts
     "session_start_balance": 10000.0,  # balance at the moment current session began
+    "day_start_balance": 10000.0,  # balance at start of trading day (for daily loss limit)
+    "trading_halted": False,  # True if daily loss limit hit
+    "halt_reason": "",
+    "day_date": "",  # current trading day date
 }
 
 PAIRS = []
@@ -585,9 +589,54 @@ def status():
 
 from flask import request
 
+# === PROTECTION SETTINGS ===
+DAILY_LOSS_LIMIT_PCT = 5.0   # halt trading if daily loss exceeds this %
+MAX_PAIR_SIZE_PCT = 20.0     # max % of balance per single pair
+
+def check_daily_loss_limit():
+    """Check if daily loss limit is breached. Returns True if trading should halt."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if state.get("day_date") != today:
+        # New day — reset
+        state["day_date"] = today
+        state["day_start_balance"] = state["demo_balance"]
+        state["trading_halted"] = False
+        state["halt_reason"] = ""
+    day_start = state.get("day_start_balance", state["demo_balance"])
+    if day_start > 0:
+        day_pnl_pct = (state["demo_balance"] - day_start) / day_start * 100
+        if day_pnl_pct <= -DAILY_LOSS_LIMIT_PCT:
+            if not state["trading_halted"]:
+                state["trading_halted"] = True
+                state["halt_reason"] = f"Дневной лимит потерь -{DAILY_LOSS_LIMIT_PCT}% достигнут"
+                tg(f"⛔ ТОРГОВЛЯ ОСТАНОВЛЕНА\nДневной убыток: {day_pnl_pct:.1f}%\nВозобновление завтра.")
+                log.warning(f"Daily loss limit hit: {day_pnl_pct:.1f}%")
+            return True
+    return state.get("trading_halted", False)
+
+def health_check():
+    """Pre-session health check. Returns (ok, message)."""
+    issues = []
+    # Check balance is positive
+    if state["demo_balance"] <= 0:
+        issues.append("Баланс <= 0")
+    # Check no orphaned/corrupt positions
+    for p in state["demo_positions"]:
+        if p["status"] == "open":
+            if p.get("size", 0) <= 0:
+                issues.append(f"Позиция {p['symbol']} с size=0")
+            if p.get("entry", 0) <= 0:
+                issues.append(f"Позиция {p['symbol']} с entry=0")
+    if issues:
+        return False, "; ".join(issues)
+    return True, "OK"
+
 @app.route("/demo/open", methods=["POST"])
 def demo_open():
     try:
+        # Protection: daily loss limit
+        if check_daily_loss_limit():
+            return jsonify({"ok": False, "error": state.get("halt_reason", "Торговля остановлена")}), 403
         data = request.get_json(force=True)
         symbol = data["symbol"]
         direction = data.get("direction", "LONG")
@@ -596,6 +645,11 @@ def demo_open():
         take_profit = float(data["take_profit"])
         leverage = float(data.get("leverage", 1.25))
         size = float(data.get("size", 2000))
+        # Protection: max size per pair (20% of balance)
+        max_size = state["demo_balance"] * MAX_PAIR_SIZE_PCT / 100
+        if size > max_size:
+            size = round(max_size, 2)
+            log.info(f"Size capped to {MAX_PAIR_SIZE_PCT}% of balance: ${size}")
         state["demo_id_counter"] += 1
         pos = {
             "id": state["demo_id_counter"],
@@ -687,6 +741,9 @@ def demo_state():
         "pending_reinvest": round(state["demo_pending_reinvest"], 2),
         "suggested_size": suggested_size,
         "session_start_balance": round(state["session_start_balance"], 2),
+        "trading_halted": state.get("trading_halted", False),
+        "halt_reason": state.get("halt_reason", ""),
+        "day_pnl_pct": round((state["demo_balance"] - state.get("day_start_balance", state["demo_balance"])) / max(state.get("day_start_balance", 1), 1) * 100, 2),
     })
 
 @app.route("/demo/journal")
