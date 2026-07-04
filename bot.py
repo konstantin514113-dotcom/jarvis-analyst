@@ -109,12 +109,15 @@ state = {
 }
 
 # === EXCHANGE FEES (OKX spot, Lv1 / base tier) ===
-TAKER_FEE_PCT = 0.10  # % per side, market order (entry and SL/TP exits are both taker fills)
-FEE_RATE = TAKER_FEE_PCT / 100.0
+MAKER_FEE_PCT = 0.08  # % per side — limit order that rests on the book (entry, TP, partial-close targets)
+TAKER_FEE_PCT = 0.10  # % per side — market order needed immediately (SL, manual/forced close)
+MAKER_RATE = MAKER_FEE_PCT / 100.0
+TAKER_RATE = TAKER_FEE_PCT / 100.0
 
-def calc_fee(notional):
-    """Fee in USD for a given notional (size * leverage) traded at taker rate."""
-    return round(notional * FEE_RATE, 2)
+def calc_fee(notional, maker=False):
+    """Fee in USD for a given notional (size * leverage). maker=True uses the cheaper resting-order rate."""
+    rate = MAKER_RATE if maker else TAKER_RATE
+    return round(notional * rate, 2)
 
 PAIRS = []
 
@@ -183,6 +186,24 @@ def get_candles(symbol, bar="15m", limit=30):
         return [{"c":float(c[4]),"v":float(c[5])} for c in reversed(data)]
     except: return None
 
+# === LIQUIDITY / SPREAD FILTERS ===
+MIN_VOL_24H_USDT   = 300000   # minimum 24h quote volume to consider a pair tradeable at real size
+SPREAD_MAX_PCT     = 0.15     # max bid/ask spread allowed (%), wider = hidden cost beyond commission
+MIN_ORDERBOOK_DEPTH_USD = 15000  # min combined top-5-level bid+ask depth, protects against slippage
+
+def get_orderbook(symbol, sz=5):
+    try:
+        r = requests.get(f"{OKX_BASE}/api/v5/market/books?instId={symbol}&sz={sz}", timeout=5)
+        d = r.json().get("data",[{}])[0]
+        bids = d.get("bids",[]); asks = d.get("asks",[])
+        if not bids or not asks: return None
+        best_bid = float(bids[0][0]); best_ask = float(asks[0][0])
+        if best_ask <= 0: return None
+        spread_pct = (best_ask - best_bid) / best_ask * 100
+        depth_usd = sum(float(p)*float(q) for p,q,*_ in bids) + sum(float(p)*float(q) for p,q,*_ in asks)
+        return {"spread_pct": round(spread_pct,4), "depth_usd": round(depth_usd,2)}
+    except: return None
+
 def calc_rsi(candles, period=14):
     if not candles or len(candles) < period+1: return 50
     closes = [c["c"] for c in candles]
@@ -214,7 +235,10 @@ def calc_ma(candles,period=20):
 
 def analyze_pair(symbol):
     t = get_ticker(symbol)
-    if not t or t["vol24h"] < 5000: return None
+    if not t or t["vol24h"] < MIN_VOL_24H_USDT: return None
+    ob = get_orderbook(symbol)
+    if not ob or ob["spread_pct"] > SPREAD_MAX_PCT or ob["depth_usd"] < MIN_ORDERBOOK_DEPTH_USD:
+        return None
     c15 = get_candles(symbol,"15m",30)
     c1h = get_candles(symbol,"1H",30)
     rsi15 = calc_rsi(c15); macd15 = calc_macd(c15)
@@ -234,7 +258,8 @@ def analyze_pair(symbol):
     score += 20
     if score < 89: return None
     return {**t,"rsi":rsi15,"rsi_1h":rsi1h,"macd":macd15,"macd_1h":macd1h,
-            "htf_bullish":True,"above_ma20":above_ma,"dist_from_high":round(dist,2),"score":round(score,1)}
+            "htf_bullish":True,"above_ma20":above_ma,"dist_from_high":round(dist,2),"score":round(score,1),
+            "spread_pct":ob["spread_pct"],"depth_usd":ob["depth_usd"]}
 
 def scan():
     candidates = []
@@ -472,7 +497,7 @@ def check_position_for_symbol(symbol, price):
             if not p.get("partial_closed") and pnl_pct * 100 >= PARTIAL_CLOSE_PCT:
                 partial_size = p["size"] * PARTIAL_CLOSE_RATIO
                 partial_pnl_gross = round(partial_size * pnl_pct, 2)
-                exit_fee = calc_fee(partial_size * p["leverage"])
+                exit_fee = calc_fee(partial_size * p["leverage"], maker=True)
                 partial_pnl_net = round(partial_pnl_gross - exit_fee, 2)
                 state["demo_balance"] += partial_pnl_net
                 state["demo_pending_reinvest"] += partial_pnl_net
@@ -491,7 +516,7 @@ def check_position_for_symbol(symbol, price):
             hit_tp = (p["direction"]=="LONG" and price >= p["take_profit"]) or (p["direction"]=="SHORT" and price <= p["take_profit"])
             hit_sl = (p["direction"]=="LONG" and price <= p["stop_loss"]) or (p["direction"]=="SHORT" and price >= p["stop_loss"])
             if hit_tp or hit_sl:
-                exit_fee = calc_fee(p["size"] * p["leverage"])
+                exit_fee = calc_fee(p["size"] * p["leverage"], maker=hit_tp)
                 p["pnl_usd_gross"] = p["pnl_usd"]
                 p["pnl_usd"] = round(p["pnl_usd"] - exit_fee, 2)
                 p["fees_paid"] = p.get("fees_paid", 0) + exit_fee
@@ -677,7 +702,7 @@ def demo_open():
             size = round(max_size, 2)
             log.info(f"Size capped to {MAX_PAIR_SIZE_PCT}% of balance: ${size}")
         state["demo_id_counter"] += 1
-        entry_fee = calc_fee(size * leverage)
+        entry_fee = calc_fee(size * leverage, maker=True)
         state["demo_balance"] -= entry_fee
         state["demo_total_fees"] += entry_fee
         pos = {
