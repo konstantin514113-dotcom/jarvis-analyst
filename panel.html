@@ -190,8 +190,9 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
     <div class="stat-box"><div class="stat-label">ВИНРЕЙТ</div><div class="stat-val" id="st-winrate">0%</div></div>
     <div class="stat-box"><div class="stat-label">ПОБЕД</div><div class="stat-val green" id="st-wins">0</div></div>
     <div class="stat-box"><div class="stat-label">ПОРАЖЕНИЙ</div><div class="stat-val red" id="st-losses">0</div></div>
-    <div class="stat-box"><div class="stat-label">ИТОГО P&L</div><div class="stat-val" id="st-pnl">$0.00</div></div>
+    <div class="stat-box"><div class="stat-label">ИТОГО P&L (net)</div><div class="stat-val" id="st-pnl">$0.00</div></div>
     <div class="stat-box"><div class="stat-label">СРЕДНИЙ ВЫИГРЫШ</div><div class="stat-val green" id="st-avgwin">$0.00</div></div>
+    <div class="stat-box"><div class="stat-label">КОМИССИИ OKX</div><div class="stat-val red" id="st-fees">$0.00</div></div>
   </div>
 
   <div class="section-title" style="padding-left:16px;margin-top:14px">ПО ПАРАМ</div>
@@ -497,6 +498,7 @@ async function fetchStats(){
     pnlEl.textContent = fmtMoney(d.total_pnl);
     pnlEl.className = 'stat-val ' + (d.total_pnl >= 0 ? 'green' : 'red');
     document.getElementById('st-avgwin').textContent = fmtMoney(d.avg_win);
+    document.getElementById('st-fees').textContent = fmtMoney(d.total_fees_paid || 0);
 
     const jr = await fetch('/demo/journal');
     const jd = await jr.json();
@@ -505,7 +507,8 @@ async function fetchStats(){
     html += trades.map(t=>{
       const sym = t.symbol.replace('-USDT','');
       const pnlClass = t.pnl_usd >= 0 ? 'pos' : 'neg';
-      return '<div class="jt-row"><div class="jt-pair">'+sym+' <span style="color:#455a64;font-size:8px">'+t.direction+'</span></div><div class="jt-pnl '+pnlClass+'">'+fmtMoney(t.pnl_usd)+'</div><div class="jt-pnl '+pnlClass+'">'+fmtPct(t.pnl_pct)+'</div><div style="color:#455a64">'+t.closed_at+'</div></div>';
+      const feeStr = t.fees_paid ? ' <span style="color:#455a64;font-size:8px">(-комисс. '+fmtMoney(t.fees_paid)+')</span>' : '';
+      return '<div class="jt-row"><div class="jt-pair">'+sym+' <span style="color:#455a64;font-size:8px">'+t.direction+'</span></div><div class="jt-pnl '+pnlClass+'">'+fmtMoney(t.pnl_usd)+feeStr+'</div><div class="jt-pnl '+pnlClass+'">'+fmtPct(t.pnl_pct)+'</div><div style="color:#455a64">'+t.closed_at+'</div></div>';
     }).join('');
     document.getElementById('journal-table').innerHTML = html;
 

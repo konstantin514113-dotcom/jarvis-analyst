@@ -105,7 +105,16 @@ state = {
     "trading_halted": False,  # True if daily loss limit hit
     "halt_reason": "",
     "day_date": "",  # current trading day date
+    "demo_total_fees": 0.0,  # cumulative OKX taker fees paid across all trades
 }
+
+# === EXCHANGE FEES (OKX spot, Lv1 / base tier) ===
+TAKER_FEE_PCT = 0.10  # % per side, market order (entry and SL/TP exits are both taker fills)
+FEE_RATE = TAKER_FEE_PCT / 100.0
+
+def calc_fee(notional):
+    """Fee in USD for a given notional (size * leverage) traded at taker rate."""
+    return round(notional * FEE_RATE, 2)
 
 PAIRS = []
 
@@ -287,6 +296,8 @@ def _log_journal_entry_impl(p):
         "size": p["size"],
         "pnl_pct": p.get("pnl_pct", 0),
         "pnl_usd": p.get("pnl_usd", 0),
+        "pnl_usd_gross": p.get("pnl_usd_gross", p.get("pnl_usd", 0)),
+        "fees_paid": p.get("fees_paid", 0),
         "result": p.get("result"),
         "score": p.get("score"),
         "opened_at": p.get("opened_at"),
@@ -322,6 +333,11 @@ def start_new_session():
                 pnl_pct *= p["leverage"]
                 p["pnl_pct"] = round(pnl_pct * 100, 2)
                 p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+                exit_fee = calc_fee(p["size"] * p["leverage"])
+                p["pnl_usd_gross"] = p["pnl_usd"]
+                p["pnl_usd"] = round(p["pnl_usd"] - exit_fee, 2)
+                p["fees_paid"] = p.get("fees_paid", 0) + exit_fee
+                state["demo_total_fees"] += exit_fee
                 p["status"] = "closed"
                 p["result"] = "WIN" if p["pnl_usd"] >= 0 else "LOSS"
                 p["close_price"] = price
@@ -455,28 +471,38 @@ def check_position_for_symbol(symbol, price):
             # === PARTIAL CLOSE at +1.5% ===
             if not p.get("partial_closed") and pnl_pct * 100 >= PARTIAL_CLOSE_PCT:
                 partial_size = p["size"] * PARTIAL_CLOSE_RATIO
-                partial_pnl = round(partial_size * pnl_pct, 2)
-                state["demo_balance"] += partial_pnl
-                state["demo_pending_reinvest"] += partial_pnl
+                partial_pnl_gross = round(partial_size * pnl_pct, 2)
+                exit_fee = calc_fee(partial_size * p["leverage"])
+                partial_pnl_net = round(partial_pnl_gross - exit_fee, 2)
+                state["demo_balance"] += partial_pnl_net
+                state["demo_pending_reinvest"] += partial_pnl_net
+                state["demo_total_fees"] += exit_fee
+                p["fees_paid"] = p.get("fees_paid", 0) + exit_fee
                 p["size"] = round(p["size"] * (1 - PARTIAL_CLOSE_RATIO), 2)
                 p["partial_closed"] = True
-                p["partial_pnl"] = partial_pnl
+                p["partial_pnl"] = partial_pnl_net
+                p["partial_pnl_gross"] = partial_pnl_gross
                 # Move SL to breakeven
                 p["stop_loss"] = p["entry"]
                 p["trailing"] = True
-                log.info(f"Partial close {symbol}: 50% at {pnl_pct*100:.2f}%, PnL={partial_pnl:+.2f}$, SL→breakeven")
+                log.info(f"Partial close {symbol}: 50% at {pnl_pct*100:.2f}%, PnL={partial_pnl_net:+.2f}$ net (fee {exit_fee:.2f}), SL→breakeven")
 
             # === SL / TP CHECK ===
             hit_tp = (p["direction"]=="LONG" and price >= p["take_profit"]) or (p["direction"]=="SHORT" and price <= p["take_profit"])
             hit_sl = (p["direction"]=="LONG" and price <= p["stop_loss"]) or (p["direction"]=="SHORT" and price >= p["stop_loss"])
             if hit_tp or hit_sl:
+                exit_fee = calc_fee(p["size"] * p["leverage"])
+                p["pnl_usd_gross"] = p["pnl_usd"]
+                p["pnl_usd"] = round(p["pnl_usd"] - exit_fee, 2)
+                p["fees_paid"] = p.get("fees_paid", 0) + exit_fee
+                state["demo_total_fees"] += exit_fee
                 p["status"] = "closed"
                 p["result"] = "WIN" if hit_tp else ("BREAKEVEN" if p.get("partial_closed") and p["pnl_usd"] >= 0 else "LOSS")
                 p["close_price"] = price
                 p["closed_at"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
                 state["demo_balance"] += p["pnl_usd"]
                 log_journal_entry(p)
-                log.info(f"Position closed: {symbol} {p['result']} {p['pnl_usd']:+.2f}$ (partial: {p.get('partial_pnl',0):+.2f}$)")
+                log.info(f"Position closed: {symbol} {p['result']} {p['pnl_usd']:+.2f}$ net (fees total {p['fees_paid']:.2f}, partial: {p.get('partial_pnl',0):+.2f}$)")
                 resubscribe_ws()
         except Exception as e:
             log.error(f"check_position error {symbol}: {e}")
@@ -651,6 +677,9 @@ def demo_open():
             size = round(max_size, 2)
             log.info(f"Size capped to {MAX_PAIR_SIZE_PCT}% of balance: ${size}")
         state["demo_id_counter"] += 1
+        entry_fee = calc_fee(size * leverage)
+        state["demo_balance"] -= entry_fee
+        state["demo_total_fees"] += entry_fee
         pos = {
             "id": state["demo_id_counter"],
             "symbol": symbol,
@@ -666,6 +695,8 @@ def demo_open():
             "status": "open",
             "result": None,
             "opened_at": datetime.now(timezone.utc).strftime("%H:%M UTC"),
+            "entry_fee": entry_fee,
+            "fees_paid": entry_fee,
         }
         state["demo_positions"].append(pos)
         return jsonify({"ok": True, "position": pos})
@@ -688,6 +719,11 @@ def demo_close():
                 pnl_pct *= p["leverage"]
                 p["pnl_pct"] = round(pnl_pct * 100, 2)
                 p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+                exit_fee = calc_fee(p["size"] * p["leverage"])
+                p["pnl_usd_gross"] = p["pnl_usd"]
+                p["pnl_usd"] = round(p["pnl_usd"] - exit_fee, 2)
+                p["fees_paid"] = p.get("fees_paid", 0) + exit_fee
+                state["demo_total_fees"] += exit_fee
                 p["status"] = "closed"
                 p["result"] = "WIN" if p["pnl_usd"] >= 0 else "LOSS"
                 p["close_price"] = price
@@ -714,6 +750,11 @@ def demo_close_all():
                 pnl_pct *= p["leverage"]
                 p["pnl_pct"] = round(pnl_pct * 100, 2)
                 p["pnl_usd"] = round(p["size"] * pnl_pct, 2)
+                exit_fee = calc_fee(p["size"] * p["leverage"])
+                p["pnl_usd_gross"] = p["pnl_usd"]
+                p["pnl_usd"] = round(p["pnl_usd"] - exit_fee, 2)
+                p["fees_paid"] = p.get("fees_paid", 0) + exit_fee
+                state["demo_total_fees"] += exit_fee
                 p["status"] = "closed"
                 p["result"] = "WIN" if p["pnl_usd"] >= 0 else "LOSS"
                 p["close_price"] = price
@@ -744,6 +785,7 @@ def demo_state():
         "trading_halted": state.get("trading_halted", False),
         "halt_reason": state.get("halt_reason", ""),
         "day_pnl_pct": round((state["demo_balance"] - state.get("day_start_balance", state["demo_balance"])) / max(state.get("day_start_balance", 1), 1) * 100, 2),
+        "total_fees_paid": round(state.get("demo_total_fees", 0), 2),
     })
 
 @app.route("/demo/journal")
@@ -776,12 +818,15 @@ def demo_stats():
         by_date[d]["trades"] += 1
         by_date[d]["wins"] += 1 if t["result"] == "WIN" else 0
         by_date[d]["pnl"] += t["pnl_usd"]
+    total_fees = sum(t.get("fees_paid", 0) for t in j)
     return jsonify({
         "trades": len(j),
         "wins": len(wins),
         "losses": len(losses),
         "winrate": round(len(wins) / len(j) * 100, 1) if j else 0,
         "total_pnl": round(total_pnl, 2),
+        "total_pnl_gross": round(sum(t.get("pnl_usd_gross", t["pnl_usd"]) for t in j), 2),
+        "total_fees_paid": round(total_fees, 2),
         "avg_win": round(sum(t["pnl_usd"] for t in wins) / len(wins), 2) if wins else 0,
         "avg_loss": round(sum(t["pnl_usd"] for t in losses) / len(losses), 2) if losses else 0,
         "by_symbol": by_symbol,
