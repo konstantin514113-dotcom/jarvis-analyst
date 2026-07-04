@@ -806,16 +806,34 @@ def force_scan():
                 state["status"] = "force_scan_no_candidates"
                 log.info("Force scan exhausted all 5 attempts, no candidates found")
                 return
-            result = analyze_with_claude(candidates)
-            pairs = result.get("top_pairs", [])[:5]
+            if TOP5_ONLY:
+                # EMA/VWAP/funding candidates are already a complete deterministic signal —
+                # no need for Claude ranking. Build panel-compatible pairs directly.
+                pairs = []
+                for c in candidates[:5]:
+                    entry = c["price"]
+                    pairs.append({
+                        "symbol": c["symbol"], "entry": entry,
+                        "stop_loss": round(entry * (1 - ALERT_SL_PCT/100), 8),
+                        "take_profit": round(entry * (1 + ALERT_TP_PCT/100), 8),
+                        "score": c.get("score", 95.0), "rsi": "-", "rsi_1h": "-",
+                        "macd": c.get("signal", "EMA9x21_cross"),
+                        "reason": f"EMA9x21 cross + объём + VWAP + 1H тренд + funding OK "
+                                  f"(VWAP={c.get('vwap','?')}, funding={c.get('funding_rate_pct','?')}%). "
+                                  f"⚠️ Параметры SL/TP не подтверждены бэктестом.",
+                    })
+            else:
+                result = analyze_with_claude(candidates)
+                pairs = result.get("top_pairs", [])[:5]
             if not pairs:
                 state["status"] = "force_scan_no_pairs"
                 return
-            for p in pairs:
-                e = p.get("entry", 0)
-                if e > 0:
-                    p["stop_loss"] = round(e * 0.992, 8)
-                    p["take_profit"] = round(e * 1.025, 8)
+            if not TOP5_ONLY:
+                for p in pairs:
+                    e = p.get("entry", 0)
+                    if e > 0:
+                        p["stop_loss"] = round(e * 0.992, 8)
+                        p["take_profit"] = round(e * 1.025, 8)
             now = datetime.now(timezone.utc)
             scan_time = now.strftime("%H:%M UTC")
             start_new_session()
