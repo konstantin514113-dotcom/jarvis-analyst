@@ -106,6 +106,8 @@ state = {
     "halt_reason": "",
     "day_date": "",  # current trading day date
     "demo_total_fees": 0.0,  # cumulative OKX taker fees paid across all trades
+    "signal_alerts": [],  # live Telegram entry/exit alerts (TOP5_ONLY mode), not real trades
+    "last_auto_scan": 0,  # timestamp of last automatic scan (TOP5_ONLY mode)
 }
 
 # === EXCHANGE FEES (OKX spot, Lv1 / base tier) ===
@@ -668,17 +670,105 @@ def price_monitor():
                         check_position_for_symbol(p["symbol"], t["price"])
                 except: pass
         except: pass
+        try:
+            check_signal_alerts()
+        except Exception as e:
+            log.error(f"check_signal_alerts error: {e}")
+
+# === LIVE TELEGRAM SIGNAL ALERTS (TOP5_ONLY mode) ===
+# NOTE: SL/TP below are NOT yet validated by backtest — v2 backtest (EMA/VWAP/funding
+# signal) showed a NEGATIVE edge across all 30 SL/TP combos tested. These alerts are
+# sent for live observation while better parameters are being researched (v3 mean-
+# reversion test in progress). Every alert message says this explicitly.
+ALERT_SL_PCT = 1.5
+ALERT_TP_PCT = 3.0
+AUTO_SCAN_TIMES = [(7,0), (12,0), (16,0), (20,0)]  # UTC hours:minutes, ~4x/day
+AUTO_SCAN_WINDOW_MIN = 10  # only trigger within this many minutes after the scheduled time
+
+def maybe_auto_scan():
+    if not TOP5_ONLY: return
+    now = datetime.now(timezone.utc)
+    for h, m in AUTO_SCAN_TIMES:
+        scheduled = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        elapsed_min = (now - scheduled).total_seconds() / 60
+        if 0 <= elapsed_min <= AUTO_SCAN_WINDOW_MIN:
+            key = scheduled.timestamp()
+            if state.get("last_auto_scan") == key: continue
+            state["last_auto_scan"] = key
+            run_auto_scan()
+            return
+
+def run_auto_scan():
+    log.info("Auto-scan triggered (TOP5_ONLY signal mode)")
+    already_open = {a["symbol"] for a in state["signal_alerts"] if a["status"] == "open"}
+    for symbol in PAIRS:
+        if symbol in already_open: continue
+        try:
+            d = analyze_pair_ema(symbol)
+        except Exception as e:
+            log.error(f"auto_scan analyze error {symbol}: {e}")
+            continue
+        if not d: continue
+        entry = d["price"]
+        sl = round(entry * (1 - ALERT_SL_PCT/100), 8)
+        tp = round(entry * (1 + ALERT_TP_PCT/100), 8)
+        alert = {
+            "symbol": symbol, "direction": "LONG", "entry": entry,
+            "stop_loss": sl, "take_profit": tp, "status": "open",
+            "opened_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "vwap": d.get("vwap"), "funding_rate_pct": d.get("funding_rate_pct"),
+        }
+        state["signal_alerts"].append(alert)
+        tg(f"🔵 СИГНАЛ ВХОД (тест, без подтверждённой прибыльности бэктестом)\n\n"
+           f"<b>{symbol}</b> LONG\n"
+           f"Вход: {entry}\n"
+           f"SL: {sl} (-{ALERT_SL_PCT}%)\n"
+           f"TP: {tp} (+{ALERT_TP_PCT}%)\n"
+           f"Сигнал: EMA9x21 cross + объём + VWAP + 1H тренд + funding OK\n\n"
+           f"⚠️ Параметры SL/TP пока не прошли проверку бэктестом на прибыльность — "
+           f"наблюдательный режим.")
+        log.info(f"Sent entry alert: {symbol} @ {entry}")
+
+def check_signal_alerts():
+    for a in state["signal_alerts"]:
+        if a["status"] != "open": continue
+        t = get_ticker(a["symbol"])
+        if not t: continue
+        price = t["price"]
+        hit_tp = price >= a["take_profit"]
+        hit_sl = price <= a["stop_loss"]
+        if not (hit_tp or hit_sl): continue
+        result = "TP" if hit_tp else "SL"
+        pnl_pct = (price - a["entry"]) / a["entry"] * 100
+        a["status"] = "closed"
+        a["result"] = result
+        a["close_price"] = price
+        a["closed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        emoji = "✅" if result == "TP" else "🛑"
+        tg(f"{emoji} СИГНАЛ ВЫХОД\n\n"
+           f"<b>{a['symbol']}</b> LONG закрыт по {result}\n"
+           f"Вход: {a['entry']} → Выход: {price}\n"
+           f"Результат: {pnl_pct:+.2f}%")
+        log.info(f"Alert closed: {a['symbol']} {result} {pnl_pct:+.2f}%")
 
 def main():
     log.info("JARVIS ANALYST v3 starting...")
     load_persistent_state()
     load_pairs()
-    tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Только по команде ПЕРЕСКАН")
+    if TOP5_ONLY:
+        tg(f"JARVIS SIGNALS v1 (тест)\nПары: {', '.join(TOP5_PAIRS)}\n"
+           f"Автосканы: {', '.join(f'{h:02d}:{m:02d}' for h,m in AUTO_SCAN_TIMES)} UTC\n"
+           f"⚠️ Стратегия пока в стадии бэктест-исследования, без подтверждённой прибыльности")
+    else:
+        tg(f"JARVIS ANALYST v3\n{len(PAIRS)} пар | Только по команде ПЕРЕСКАН")
     time.sleep(10)
     threading.Thread(target=price_monitor, daemon=True).start()
-    # No automatic scanning — signals only via /force-scan (ПЕРЕСКАН button)
     while True:
-        time.sleep(60)
+        time.sleep(30)
+        try:
+            maybe_auto_scan()
+        except Exception as e:
+            log.error(f"maybe_auto_scan error: {e}")
 
 app = Flask(__name__)
 
@@ -692,6 +782,10 @@ def dashboard():
 @app.route("/signals")
 def signals():
     return jsonify(state)
+
+@app.route("/signal-alerts")
+def signal_alerts_view():
+    return jsonify({"alerts": state["signal_alerts"], "top5_only": TOP5_ONLY, "pairs": PAIRS})
 
 @app.route("/force-scan")
 def force_scan():
