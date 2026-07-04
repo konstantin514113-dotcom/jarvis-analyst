@@ -14,7 +14,7 @@ JARVIS BACKTEST — механический скринер на историч�
 опционально BT_PAIRS (default 50), BT_MONTHS (default 12).
 """
 
-import os, time, json, base64, requests
+import os, time, json, base64, requests, tempfile
 from datetime import datetime, timezone, timedelta
 
 OKX_BASE = "https://www.okx.com"
@@ -322,10 +322,15 @@ def run_backtest():
                  "already-bullish-filtered top-5 as SHORT, not an independently bearish-filtered signal."),
     }
 
-    with open("/tmp/backtest_result.json", "w") as f:
+    result_path_tmp = os.path.join(tempfile.gettempdir(), "backtest_result.json")
+    result_path_local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backtest_result.json")
+    with open(result_path_tmp, "w") as f:
+        json.dump(result, f, indent=2)
+    with open(result_path_local, "w") as f:
         json.dump(result, f, indent=2)
     log(f"DONE: {len(all_trades)} trades, winrate {winrate:.1f}%, "
         f"final balance ${balance:,.2f}, max DD {max_dd_pct:.1f}%")
+    log(f"Result saved to: {result_path_local}")
     push_to_github(result)
 
 
