@@ -236,9 +236,6 @@ def calc_ma(candles,period=20):
 def analyze_pair(symbol):
     t = get_ticker(symbol)
     if not t or t["vol24h"] < MIN_VOL_24H_USDT: return None
-    ob = get_orderbook(symbol)
-    if not ob or ob["spread_pct"] > SPREAD_MAX_PCT or ob["depth_usd"] < MIN_ORDERBOOK_DEPTH_USD:
-        return None
     c15 = get_candles(symbol,"15m",30)
     c1h = get_candles(symbol,"1H",30)
     rsi15 = calc_rsi(c15); macd15 = calc_macd(c15)
@@ -257,19 +254,33 @@ def analyze_pair(symbol):
     score += 10 if dist>1 else 0
     score += 20
     if score < 89: return None
+    # Liquidity/spread check only for candidates that already passed the mechanical filter
+    # (cheap filters first — avoids hammering the OKX orderbook endpoint for all 300 pairs)
+    ob = get_orderbook(symbol)
+    if not ob or ob["spread_pct"] > SPREAD_MAX_PCT or ob["depth_usd"] < MIN_ORDERBOOK_DEPTH_USD:
+        log.info(f"{symbol}: score={score:.1f} PASSED but REJECTED on liquidity "
+                 f"(spread={ob['spread_pct'] if ob else 'N/A'}%, depth=${ob['depth_usd'] if ob else 'N/A'})")
+        return None
     return {**t,"rsi":rsi15,"rsi_1h":rsi1h,"macd":macd15,"macd_1h":macd1h,
             "htf_bullish":True,"above_ma20":above_ma,"dist_from_high":round(dist,2),"score":round(score,1),
             "spread_pct":ob["spread_pct"],"depth_usd":ob["depth_usd"]}
 
 def scan():
     candidates = []
+    scored_pre_liquidity = 0
     for symbol in PAIRS:
         try:
             d = analyze_pair(symbol)
-            if d: candidates.append(d)
+            if d:
+                candidates.append(d)
             time.sleep(0.1)
-        except: pass
+        except Exception as e:
+            log.debug(f"analyze_pair error {symbol}: {e}")
     candidates.sort(key=lambda x: x["score"], reverse=True)
+    log.info(f"Scan complete: {len(candidates)} candidates passed all filters (score>=89 + liquidity)")
+    if not candidates:
+        log.warning("Scan found ZERO candidates. Check logs above for 'REJECTED on liquidity' lines, "
+                    "or it may simply mean no pair scored >=89 this scan (normal during low-volatility periods).")
     return candidates[:25]
 
 def analyze_with_claude(candidates):
