@@ -213,6 +213,7 @@ body{background:#080b0f;color:#c9d1d9;font-family:'JetBrains Mono',monospace;max
 <script>
 const STARTING_BALANCE_REF = 10000;
 const cardConfig = {};
+let usedSymbols = new Set();  // symbols already traded this session (hide from signals)
 
 async function forceRescan(){
   const btn = document.getElementById('rescan-btn');
@@ -343,8 +344,10 @@ async function closeAll(){
 function trade(sym){window.open('https://www.okx.com/trade-swap/'+sym.toLowerCase().replace('-usdt','')+'-usdt-swap','_blank')}
 
 function renderCards(sigs){
-  if(!sigs||!sigs.length){
-    document.getElementById('cards').innerHTML='<div class="waiting"><div class="waiting-icon">⏳</div><div class="waiting-text">ОЖИДАНИЕ СИГНАЛА</div><div class="waiting-sub">Бот сканирует 300 пар</div></div>';
+  // Hide pairs that are already traded (open or closed this session)
+  sigs = (sigs||[]).filter(s => !usedSymbols.has(s.symbol));
+  if(!sigs.length){
+    document.getElementById('cards').innerHTML='<div class="waiting"><div class="waiting-icon">✅</div><div class="waiting-text">ВСЕ СИГНАЛЫ ОТРАБОТАНЫ</div><div class="waiting-sub">Нажмите ПЕРЕСКАН для новых</div></div>';
     return;
   }
   const perPairSize = lastSuggestedSize;
@@ -470,7 +473,10 @@ async function fetchDemoState(){
     }
     lastSuggestedSize = d.suggested_size || 2000;
     document.getElementById('size-hint').textContent = 'Размер на пару: $' + lastSuggestedSize.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' (1/5 депозита)';
-    renderPositions(d.positions || [], d.balance, d.pending_reinvest || 0, d.session_start_balance || d.balance);
+    // Track all symbols that have positions (open or closed) — hide them from signals
+    const positions = d.positions || [];
+    usedSymbols = new Set(positions.map(p => p.symbol));
+    renderPositions(positions, d.balance, d.pending_reinvest || 0, d.session_start_balance || d.balance);
   }catch(e){}
 }
 
