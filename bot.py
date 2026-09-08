@@ -136,7 +136,11 @@ RULES: Only select pairs where htf_confirmed=YES. RSI 45-65, MACD bullish on bot
 SL = entry * 0.985, TP = entry * 1.035.
 Reply ONLY valid JSON: {"top_pairs": [{"symbol": "XXX-USDT", "entry": 0.0, "stop_loss": 0.0, "take_profit": 0.0, "score": 85, "rsi": 55, "rsi_1h": 52, "macd": "bullish", "reason": "one sentence in Russian"}]}"""
 
+DISABLE_TELEGRAM = os.environ.get("DISABLE_TELEGRAM", "false").lower() == "true"
+
 def tg(msg):
+    if DISABLE_TELEGRAM:
+        return
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             json={"chat_id": TELEGRAM_CHAT, "text": msg, "parse_mode": "HTML"}, timeout=10)
