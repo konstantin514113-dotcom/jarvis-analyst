@@ -497,6 +497,9 @@ def _resolve_chat_id_by_name(name_query):
         r = requests.get(f"{GREEN_API_BASE}/getChats/{GREEN_API_API_TOKEN}", timeout=20)
         r.raise_for_status()
         chats = r.json()
+        print(f"[startup] Всего чатов в аккаунте: {len(chats)}")
+        for chat in chats:
+            print(f"[startup]   chat: id={chat.get('id')} name={chat.get('name')!r}")
         name_query_low = name_query.lower()
         for chat in chats:
             chat_name = (chat.get("name") or "").lower()
