@@ -498,13 +498,14 @@ def _resolve_chat_id_by_name(name_query):
         r.raise_for_status()
         chats = r.json()
         print(f"[startup] Всего чатов в аккаунте: {len(chats)}")
-        for chat in chats:
-            print(f"[startup]   chat: id={chat.get('id')} name={chat.get('name')!r}")
+        if chats:
+            print(f"[startup] Пример структуры чата (raw): {chats[0]}")
         name_query_low = name_query.lower()
         for chat in chats:
             chat_name = (chat.get("name") or "").lower()
             if name_query_low in chat_name:
-                return chat.get("id"), chat.get("name")
+                chat_id = chat.get("id") or chat.get("chatId") or chat.get("jid") or chat.get("contactId")
+                return chat_id, chat.get("name")
     except Exception as e:
         print(f"[startup] Не удалось получить список чатов: {e}")
     return None, None
