@@ -275,12 +275,14 @@ def webhook_max():
 
 def _backfill_chat_history(chat_id, max_messages=1000):
     """Тянет историю чата через getChatHistory и прогоняет через тот же парсер, что и вебхук."""
+    print(f"[backfill] Запрашиваю историю для chatId={chat_id!r} (type={type(chat_id).__name__})")
     try:
         r = requests.post(
             f"{GREEN_API_BASE}/getChatHistory/{GREEN_API_API_TOKEN}",
-            json={"chatId": chat_id, "count": max_messages},
+            json={"chatId": str(chat_id), "count": max_messages},
             timeout=60,
         )
+        print(f"[backfill] HTTP статус: {r.status_code}, тело (первые 500 симв.): {r.text[:500]!r}")
         r.raise_for_status()
         messages = r.json()
     except Exception as e:
