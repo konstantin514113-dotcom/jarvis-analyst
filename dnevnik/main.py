@@ -4,6 +4,7 @@ import base64
 import sqlite3
 import datetime
 import urllib.parse
+import threading
 import requests
 from flask import Flask, request, jsonify, render_template_string
 
@@ -635,8 +636,13 @@ def _auto_configure():
         count_row = conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()
         conn.close()
         if count_row["c"] == 0:
-            print("[startup] База пуста — запускаю загрузку истории чата с начала...")
-            _backfill_chat_history(GREEN_API_CHAT_ID, max_messages=1000)
+            print("[startup] База пуста — запускаю загрузку истории чата с начала (в фоне)...")
+            threading.Thread(
+                target=_backfill_chat_history,
+                args=(GREEN_API_CHAT_ID,),
+                kwargs={"max_messages": 1000},
+                daemon=True,
+            ).start()
 
 
 _auto_configure()  # выполняется один раз при импорте модуля (в т.ч. под gunicorn)
