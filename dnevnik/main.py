@@ -163,50 +163,20 @@ def download_green_api_file(url):
 
 # ---------- Webhook ----------
 
-@app.route("/webhook/max", methods=["POST"])
-def webhook_max():
-    payload = request.get_json(force=True, silent=True) or {}
+def _message_already_processed(max_message_id):
+    if not max_message_id:
+        return False
+    conn = get_db()
+    row = conn.execute("SELECT 1 FROM messages WHERE max_message_id = ?", (max_message_id,)).fetchone()
+    conn.close()
+    return row is not None
 
-    if payload.get("typeWebhook") != "incomingMessageReceived":
-        return jsonify({"ok": True, "skipped": "not a message"}), 200
 
-    sender_data = payload.get("senderData", {})
-    chat_id = sender_data.get("chatId", "")
+def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at):
+    if _message_already_processed(max_message_id):
+        return "duplicate"
 
-    if GREEN_API_CHAT_ID and chat_id != GREEN_API_CHAT_ID:
-        return jsonify({"ok": True, "skipped": "other chat"}), 200
-
-    message_data = payload.get("messageData", {})
-    text = ""
-    image_b64 = None
-    image_media_type = None
-    has_image = 0
-
-    if "textMessageData" in message_data:
-        text = message_data["textMessageData"].get("textMessage", "")
-    elif "extendedTextMessageData" in message_data:
-        text = message_data["extendedTextMessageData"].get("text", "")
-    elif "fileMessageData" in message_data:
-        file_data = message_data["fileMessageData"]
-        mime = file_data.get("mimeType", "")
-        caption = file_data.get("caption", "") or ""
-        text = caption
-        if mime.startswith("image/"):
-            download_url = file_data.get("downloadUrl")
-            if download_url:
-                try:
-                    image_b64 = download_green_api_file(download_url)
-                    image_media_type = mime
-                    has_image = 1
-                except Exception:
-                    pass
-
-    if not text.strip() and not image_b64:
-        return jsonify({"ok": True, "skipped": "no text or image"}), 200
-
-    max_message_id = payload.get("idMessage", "")
-    received_at = datetime.datetime.utcnow().isoformat()
-
+    has_image = 1 if image_b64 else 0
     parsed = parse_message_with_llm(text, image_b64, image_media_type)
 
     conn = get_db()
@@ -250,8 +220,130 @@ def webhook_max():
 
     conn.commit()
     conn.close()
+    return "ok"
 
-    return jsonify({"ok": True}), 200
+
+@app.route("/webhook/max", methods=["POST"])
+def webhook_max():
+    payload = request.get_json(force=True, silent=True) or {}
+
+    if payload.get("typeWebhook") != "incomingMessageReceived":
+        return jsonify({"ok": True, "skipped": "not a message"}), 200
+
+    sender_data = payload.get("senderData", {})
+    chat_id = sender_data.get("chatId", "")
+
+    if GREEN_API_CHAT_ID and chat_id != GREEN_API_CHAT_ID:
+        return jsonify({"ok": True, "skipped": "other chat"}), 200
+
+    message_data = payload.get("messageData", {})
+    text = ""
+    image_b64 = None
+    image_media_type = None
+
+    if "textMessageData" in message_data:
+        text = message_data["textMessageData"].get("textMessage", "")
+    elif "extendedTextMessageData" in message_data:
+        text = message_data["extendedTextMessageData"].get("text", "")
+    elif "fileMessageData" in message_data:
+        file_data = message_data["fileMessageData"]
+        mime = file_data.get("mimeType", "")
+        caption = file_data.get("caption", "") or ""
+        text = caption
+        if mime.startswith("image/"):
+            download_url = file_data.get("downloadUrl")
+            if download_url:
+                try:
+                    image_b64 = download_green_api_file(download_url)
+                    image_media_type = mime
+                except Exception:
+                    pass
+
+    if not text.strip() and not image_b64:
+        return jsonify({"ok": True, "skipped": "no text or image"}), 200
+
+    max_message_id = payload.get("idMessage", "")
+    received_at = datetime.datetime.utcnow().isoformat()
+
+    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at)
+
+    return jsonify({"ok": True, "result": result}), 200
+
+
+# ---------- Backfill (история чата с начала) ----------
+
+def _backfill_chat_history(chat_id, max_messages=1000):
+    """Тянет историю чата через getChatHistory и прогоняет через тот же парсер, что и вебхук."""
+    try:
+        r = requests.post(
+            f"{GREEN_API_BASE}/getChatHistory/{GREEN_API_API_TOKEN}",
+            json={"chatId": chat_id, "count": max_messages},
+            timeout=60,
+        )
+        r.raise_for_status()
+        messages = r.json()
+    except Exception as e:
+        print(f"[backfill] Не удалось получить историю чата: {e}")
+        return 0
+
+    print(f"[backfill] Получено сообщений из истории: {len(messages)}")
+
+    # getChatHistory обычно отдаёт от новых к старым — разворачиваем, чтобы обработать по порядку
+    messages = list(reversed(messages))
+
+    processed = 0
+    for msg in messages:
+        try:
+            type_message = msg.get("typeMessage", "")
+            text = ""
+            image_b64 = None
+            image_media_type = None
+
+            if type_message == "textMessage":
+                text = msg.get("textMessage", "")
+            elif type_message == "extendedTextMessage":
+                text = (msg.get("extendedTextMessage") or {}).get("text", "")
+            elif type_message in ("imageMessage",):
+                file_info = msg.get("fileMessageData") or msg.get("imageMessage") or {}
+                caption = file_info.get("caption", "") or ""
+                text = caption
+                download_url = file_info.get("downloadUrl") or msg.get("downloadUrl")
+                mime = file_info.get("mimeType", "image/jpeg")
+                if download_url:
+                    try:
+                        image_b64 = download_green_api_file(download_url)
+                        image_media_type = mime
+                    except Exception:
+                        pass
+
+            if not text.strip() and not image_b64:
+                continue
+
+            max_message_id = msg.get("idMessage", "")
+            ts = msg.get("timestamp")
+            received_at = (
+                datetime.datetime.utcfromtimestamp(ts).isoformat()
+                if ts else datetime.datetime.utcnow().isoformat()
+            )
+
+            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at)
+            if result == "ok":
+                processed += 1
+        except Exception as e:
+            print(f"[backfill] Ошибка обработки сообщения: {e}")
+            continue
+
+    print(f"[backfill] Обработано новых сообщений: {processed}")
+    return processed
+
+
+@app.route("/backfill/run", methods=["GET", "POST"])
+def backfill_run():
+    if not GREEN_API_CHAT_ID:
+        return jsonify({"error": "GREEN_API_CHAT_ID ещё не определён"}), 400
+    count = request.args.get("count", default=1000, type=int)
+    processed = _backfill_chat_history(GREEN_API_CHAT_ID, max_messages=count)
+    return jsonify({"ok": True, "processed": processed}), 200
 
 
 # ---------- Webhook setup helper ----------
@@ -537,8 +629,17 @@ def _auto_configure():
         except Exception as e:
             print(f"[startup] Не удалось зарегистрировать вебхук: {e}")
 
+    # 3. Если это первый запуск (в базе ещё нет сообщений) — подтягиваем всю историю чата
+    if GREEN_API_CHAT_ID:
+        conn = get_db()
+        count_row = conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()
+        conn.close()
+        if count_row["c"] == 0:
+            print("[startup] База пуста — запускаю загрузку истории чата с начала...")
+            _backfill_chat_history(GREEN_API_CHAT_ID, max_messages=1000)
 
-_auto_configure()
+
+_auto_configure()  # выполняется один раз при импорте модуля (в т.ч. под gunicorn)
 
 
 if __name__ == "__main__":
