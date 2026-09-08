@@ -270,6 +270,19 @@ def setup_webhook():
     return jsonify(r.json()), r.status_code
 
 
+@app.route("/setup/auto", methods=["GET"])
+def setup_auto():
+    """Автонастройка: сам определяет свой публичный адрес из заголовков запроса и регистрирует вебхук."""
+    host = request.headers.get("X-Forwarded-Host") or request.host
+    webhook_url = f"https://{host}/webhook/max"
+    r = requests.post(
+        f"{GREEN_API_BASE}/setSettings/{GREEN_API_API_TOKEN}",
+        json={"webhookUrl": webhook_url, "incomingWebhook": "yes"},
+        timeout=15,
+    )
+    return jsonify({"webhook_url": webhook_url, "green_api_response": r.json()}), r.status_code
+
+
 @app.route("/setup/chats", methods=["GET"])
 def get_chats():
     """Список чатов аккаунта — чтобы найти chatId нужного канала."""
