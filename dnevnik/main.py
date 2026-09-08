@@ -14,6 +14,7 @@ DB_PATH = os.environ.get("DB_PATH", "dnevnik.db")
 GREEN_API_ID_INSTANCE = os.environ.get("GREEN_API_ID_INSTANCE", "")
 GREEN_API_API_TOKEN = os.environ.get("GREEN_API_API_TOKEN", "")
 GREEN_API_CHAT_ID = os.environ.get("GREEN_API_CHAT_ID", "")  # id канала родители+учитель
+GREEN_API_CHAT_NAME = os.environ.get("GREEN_API_CHAT_NAME", "")  # если id неизвестен — ищем чат по имени
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 GREEN_API_BASE = f"https://api.green-api.com/waInstance{GREEN_API_ID_INSTANCE}"
@@ -486,6 +487,54 @@ def child_view():
 @app.route("/")
 def index():
     return "Дневник backend работает. Смотри /parent и /child"
+
+
+# ---------- Автонастройка при запуске (работает и под gunicorn) ----------
+
+def _resolve_chat_id_by_name(name_query):
+    """Ищет чат по подстроке в имени среди групповых чатов аккаунта."""
+    try:
+        r = requests.get(f"{GREEN_API_BASE}/getChats/{GREEN_API_API_TOKEN}", timeout=20)
+        r.raise_for_status()
+        chats = r.json()
+        name_query_low = name_query.lower()
+        for chat in chats:
+            chat_name = (chat.get("name") or "").lower()
+            if name_query_low in chat_name:
+                return chat.get("id"), chat.get("name")
+    except Exception as e:
+        print(f"[startup] Не удалось получить список чатов: {e}")
+    return None, None
+
+
+def _auto_configure():
+    global GREEN_API_CHAT_ID
+
+    # 1. Найти chatId по имени, если id ещё не задан явно
+    if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
+        resolved_id, resolved_name = _resolve_chat_id_by_name(GREEN_API_CHAT_NAME)
+        if resolved_id:
+            GREEN_API_CHAT_ID = resolved_id
+            print(f"[startup] Найден чат '{resolved_name}' → chatId={resolved_id}")
+        else:
+            print(f"[startup] Чат по имени '{GREEN_API_CHAT_NAME}' не найден среди чатов аккаунта")
+
+    # 2. Зарегистрировать вебхук на свой публичный домен (Railway задаёт его автоматически)
+    public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if public_domain and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
+        webhook_url = f"https://{public_domain}/webhook/max"
+        try:
+            r = requests.post(
+                f"{GREEN_API_BASE}/setSettings/{GREEN_API_API_TOKEN}",
+                json={"webhookUrl": webhook_url, "incomingWebhook": "yes"},
+                timeout=20,
+            )
+            print(f"[startup] Вебхук зарегистрирован: {webhook_url} → {r.status_code}")
+        except Exception as e:
+            print(f"[startup] Не удалось зарегистрировать вебхук: {e}")
+
+
+_auto_configure()
 
 
 if __name__ == "__main__":
