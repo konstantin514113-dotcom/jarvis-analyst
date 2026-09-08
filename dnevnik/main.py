@@ -349,6 +349,63 @@ def backfill_run():
     return jsonify({"ok": True, "processed": processed}), 200
 
 
+@app.route("/import/bulk", methods=["POST"])
+def import_bulk():
+    """Приём заранее распарсенных данных (например, из экспортированного архива чата)."""
+    body = request.get_json(force=True, silent=True) or {}
+    schedule_items = body.get("schedule", [])
+    homework_items = body.get("homework", [])
+    source_note = body.get("source_note", "import/bulk")
+
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO messages (max_message_id, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?)",
+        (None, source_note, 0, datetime.datetime.utcnow().isoformat(), json.dumps(body, ensure_ascii=False)),
+    )
+    message_row_id = cur.lastrowid
+
+    for item in schedule_items:
+        conn.execute(
+            "INSERT INTO schedule (week_of, day_of_week, date, time, subject, room, source_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                None,
+                item.get("day_of_week"),
+                item.get("date"),
+                item.get("time"),
+                item.get("subject"),
+                item.get("room"),
+                message_row_id,
+            ),
+        )
+
+    for item in homework_items:
+        gdz_link = build_gdz_link(item.get("subject"), item.get("page"), item.get("exercise"))
+        conn.execute(
+            "INSERT INTO homework (subject, task, page, exercise, assigned_date, due_date, gdz_link, source_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                item.get("subject"),
+                item.get("task"),
+                item.get("page"),
+                item.get("exercise"),
+                item.get("assigned_date") or datetime.datetime.utcnow().date().isoformat(),
+                item.get("due_date"),
+                gdz_link,
+                message_row_id,
+            ),
+        )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "ok": True,
+        "schedule_inserted": len(schedule_items),
+        "homework_inserted": len(homework_items),
+    }), 200
+
+
 # ---------- Webhook setup helper ----------
 
 @app.route("/setup/webhook", methods=["POST"])
