@@ -718,7 +718,7 @@ PARENT_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Дневник — Родитель</title>
+<title>Дневник {{ student_name }} — {{ class_name }}</title>
 <style>
   body { font-family: -apple-system, sans-serif; background:#f5f5f7; margin:0; padding:16px; color:#1c1c1e; }
   h1 { font-size:20px; margin:0 0 16px; }
@@ -759,7 +759,7 @@ PARENT_HTML = """<!doctype html>
 </style>
 </head>
 <body>
-<h1>📋 Дневник — вид родителя</h1>
+<h1>📋 Дневник {{ student_name }} — {{ class_name }}</h1>
 <div id="msg-counter" style="font-size:13px;color:#8e8e93;margin:-8px 0 12px;">Загрузка...</div>
 <div class="section-title">Расписание</div>
 <div id="live-status"></div>
@@ -1174,7 +1174,7 @@ CHILD_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Мой дневник</title>
+<title>Дневник {{ student_name }} — {{ class_name }}</title>
 <style>
   body { font-family: -apple-system, sans-serif; background:#fff9f0; margin:0; padding:16px; color:#1c1c1e; }
   h1 { font-size:22px; margin:0 0 18px; }
@@ -1198,7 +1198,7 @@ CHILD_HTML = """<!doctype html>
 </style>
 </head>
 <body>
-<h1>🎒 Моё домашнее задание</h1>
+<h1>🎒 Домашнее задание — {{ student_name }} ({{ class_name }})</h1>
 <div id="homework"></div>
 <h1 style="margin-top:28px;">📅 Расписание</h1>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
@@ -1288,22 +1288,22 @@ setInterval(load, 30000);
 
 @app.route("/parent")
 def parent_view():
-    return render_template_string(PARENT_HTML, api_base="")
+    return render_template_string(PARENT_HTML, api_base="", student_name="Александра", class_name="5 «в»")
 
 
 @app.route("/child")
 def child_view():
-    return render_template_string(CHILD_HTML, api_base="")
+    return render_template_string(CHILD_HTML, api_base="", student_name="Александра", class_name="5 «в»")
 
 
 @app.route("/evgeniy/parent")
 def parent_view_evgeniy():
-    return render_template_string(PARENT_HTML, api_base="/evgeniy")
+    return render_template_string(PARENT_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»")
 
 
 @app.route("/evgeniy/child")
 def child_view_evgeniy():
-    return render_template_string(CHILD_HTML, api_base="/evgeniy")
+    return render_template_string(CHILD_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»")
 
 
 @app.route("/")
