@@ -601,6 +601,14 @@ PARENT_HTML = """<!doctype html>
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
 
+function dateToDayName(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return null;
+  const idx = (d.getDay() + 6) % 7; // JS: 0=Sun -> сдвигаем на Пн=0
+  return DAY_ORDER[idx];
+}
+
 async function markSeen(id, current) {
   await fetch(`/api/homework/${id}/mark`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -619,7 +627,7 @@ function groupBySubject(items) {
   return groups;
 }
 
-function renderCalendar(schedule, hwSubjects) {
+function renderCalendar(schedule, hwDaySubjects) {
   const byDay = {};
   schedule.forEach(s => {
     const day = s.day_of_week || 'Без дня';
@@ -635,7 +643,7 @@ function renderCalendar(schedule, hwSubjects) {
     <div class="cal-col">
       <div class="cal-day">${day}</div>
       ${byDay[day].map((s, i) => {
-        const hasHw = hwSubjects && hwSubjects.has(s.subject);
+        const hasHw = hwDaySubjects && hwDaySubjects.has(day + '|' + s.subject);
         return `
         <div class="cal-lesson ${hasHw ? 'has-hw' : ''}">
           <span class="num">${i + 1}.</span><span class="subj">${s.time ? s.time + ' ' : ''}${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
@@ -652,8 +660,11 @@ async function load() {
   document.getElementById('msg-counter').textContent =
     `Сообщений из «5в класс»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
 
-  const hwSubjects = new Set(data.homework.filter(h => !h.child_done).map(h => h.subject));
-  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwSubjects);
+  const hwDaySubjects = new Set(
+    data.homework.filter(h => !h.child_done && h.subject)
+      .map(h => dateToDayName(h.assigned_date) + '|' + h.subject)
+  );
+  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
 
   const hEl = document.getElementById('homework');
   const groups = groupBySubject(data.homework);
@@ -727,6 +738,14 @@ CHILD_HTML = """<!doctype html>
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
 
+function dateToDayName(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return null;
+  const idx = (d.getDay() + 6) % 7;
+  return DAY_ORDER[idx];
+}
+
 async function toggleDone(id, done) {
   await fetch(`/api/homework/${id}/mark`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -735,7 +754,7 @@ async function toggleDone(id, done) {
   load();
 }
 
-function renderCalendar(schedule, hwSubjects) {
+function renderCalendar(schedule, hwDaySubjects) {
   const byDay = {};
   schedule.forEach(s => {
     const day = s.day_of_week || 'Без дня';
@@ -751,7 +770,7 @@ function renderCalendar(schedule, hwSubjects) {
     <div class="cal-col">
       <div class="cal-day">${day}</div>
       ${byDay[day].map((s, i) => {
-        const hasHw = hwSubjects && hwSubjects.has(s.subject);
+        const hasHw = hwDaySubjects && hwDaySubjects.has(day + '|' + s.subject);
         return `
         <div class="cal-lesson ${hasHw ? 'has-hw' : ''}">
           <span class="num">${i + 1}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
@@ -776,7 +795,7 @@ async function load() {
 
   document.getElementById('schedule').innerHTML = renderCalendar(
     data.schedule,
-    new Set(data.homework.filter(h => !h.child_done).map(h => h.subject))
+    new Set(data.homework.filter(h => !h.child_done && h.subject).map(h => dateToDayName(h.assigned_date) + '|' + h.subject))
   );
 }
 load();
