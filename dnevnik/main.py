@@ -244,8 +244,10 @@ def webhook_max():
     sender_data = payload.get("senderData", {})
     chat_id = sender_data.get("chatId", "")
     sender_name = sender_data.get("senderContactName") or sender_data.get("senderName") or ""
+    print(f"[webhook] Входящее от chatId={chat_id!r} sender={sender_name!r}")
 
     if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
+        print(f"[webhook] Пропущено — chatId={chat_id!r} не входит в ALLOWED_CHAT_IDS={ALLOWED_CHAT_IDS}")
         return jsonify({"ok": True, "skipped": "other chat"}), 200
 
     message_data = payload.get("messageData", {})
@@ -278,6 +280,7 @@ def webhook_max():
     received_at = datetime.datetime.utcnow().isoformat()
 
     result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name)
+    print(f"[webhook] Обработано: chatId={chat_id!r} idMessage={max_message_id!r} result={result!r} text_preview={text[:80]!r}")
 
     return jsonify({"ok": True, "result": result}), 200
 
