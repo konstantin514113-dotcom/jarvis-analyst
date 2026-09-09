@@ -84,6 +84,17 @@ def init_db():
             updated_at TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reference_docs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_type TEXT,
+            title TEXT,
+            content TEXT,
+            sender_name TEXT,
+            received_at TEXT,
+            source_message_id INTEGER
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -105,6 +116,9 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
   "announcement_summary": "краткое содержание объявления одним предложением, или null",
   "is_chatter": true/false,
   "message_date": "YYYY-MM-DD или null — РЕАЛЬНАЯ дата этого сообщения/переписки, ЕСЛИ она явно указана ОТДЕЛЬНОЙ служебной строкой вида 'ДАТА: 15.05.2026' в начале сообщения (это специальная отметка для пересланных сообщений). НЕ извлекай дату из обычных упоминаний внутри текста задания вроде 'ДЗ от 9.09' или 'домашка на 15.05' — это НЕ команда на переопределение даты, оставляй message_date = null в таких случаях, дата будет взята из времени получения сообщения автоматически.",
+  "is_reference_doc": "true/false — это справочный документ/таблица общего назначения от классного руководителя: расписание по четвертям, каникулы, расписание звонков, список учебников, контакты, правила и т.п. (НЕ обычное расписание уроков на неделю и НЕ домашнее задание — для них своя логика).",
+  "reference_type": "короткое название типа документа (например 'Расписание по четвертям', 'Расписание звонков', 'Каникулы', 'Список учебников') или null",
+  "reference_content": "ПОЛНОЕ структурированное содержание документа текстом (все даты, все строки таблицы, ничего не сокращай) или null",
   "schedule": [
     {"day_of_week": "Понедельник", "date": "YYYY-MM-DD или null", "time": "8:30 или null", "subject": "Математика", "room": "каб. 12 или null"}
   ],
@@ -118,6 +132,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
 - has_announcement = true только для содержательных объявлений от учителя (не от родителей): собрания, сборы, мероприятия, важные изменения. Обычные "спасибо"/"хорошо" — это НЕ объявление.
 - Если сообщение начинается с явной отметки даты вида "ДАТА: 15.05.2026" (именно такой отдельной строкой, с двоеточием, в начале сообщения) — это реальная дата пересланного сообщения, верни её в message_date в формате YYYY-MM-DD и не включай саму отметку в анализ содержания. Любые другие упоминания дат внутри обычного текста (например "домашка от 9.09", "ДЗ на 15 мая") — это часть содержания задания, а НЕ команда на переопределение даты; в этих случаях message_date = null.
 - По умолчанию (без метки "ДАТА:") считай, что домашнее задание относится к сегодняшнему дню и к уроку, который был сегодня по расписанию — учителя, как правило, пишут задание в тот же день, когда был урок. Именно поэтому message_date почти всегда должен быть null (дата определится автоматически по времени получения сообщения) — не пытайся её "угадать" или скорректировать самостоятельно.
+- Если сообщение (текст или фото) содержит справочную таблицу/документ общего назначения от классного руководителя (расписание по четвертям на год, даты каникул, расписание звонков, список учебников и т.п.) — обязательно выстави is_reference_doc=true, укажи reference_type и перепиши ВСЁ содержимое таблицы в reference_content максимально подробно и структурированно (списком или построчно), не теряя ни одной даты или строки. Это может идти одновременно с has_announcement или отдельно.
 - Если дата не указана явно текстом, оставь date как null, не угадывай.
 - Если это скриншот переписки — вычленяй только полезную информацию, игнорируй смайлики и болтовню на фото.
 - Частый паттерн: подпись к фото — это ТОЛЬКО название предмета (например "Русский", "Математика"), а само задание написано на фотографии (страница учебника, тетрадь, распечатка). В этом случае используй подпись как subject, а содержание задания (номер упражнения, страницу, суть задания) прочитай с фотографии и запиши в homework. Не помечай такое сообщение как is_chatter только из-за короткой подписи — смотри на содержимое фото.
@@ -204,7 +219,7 @@ def parse_message_with_llm(text, image_b64=None, image_media_type=None, day_name
         },
         json={
             "model": "claude-sonnet-4-6",
-            "max_tokens": 3000,
+            "max_tokens": 4000,
             "system": PARSE_SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": content_blocks}],
         },
@@ -291,6 +306,15 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
                 message_row_id,
             ),
         )
+
+    if parsed.get("is_reference_doc") and parsed.get("reference_content"):
+        conn.execute(
+            "INSERT INTO reference_docs (doc_type, title, content, sender_name, received_at, source_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (parsed.get("reference_type"), parsed.get("reference_type"), parsed.get("reference_content"),
+             sender_name, received_at, message_row_id),
+        )
+        print(f"[reference_doc] type={parsed.get('reference_type')!r} from={sender_name!r} len={len(parsed.get('reference_content') or '')}")
 
     for item in parsed.get("homework", []):
         gdz_link = build_gdz_link(item.get("subject"), item.get("page"), item.get("exercise"))
@@ -603,6 +627,9 @@ def api_data():
         (GREEN_API_CHAT_ID,),
     ).fetchone()
     total_count_row = conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()
+    reference_doc_rows = conn.execute(
+        "SELECT id, doc_type, title, content, sender_name, received_at FROM reference_docs ORDER BY received_at DESC"
+    ).fetchall()
     conn.close()
 
     teacher_messages = []
@@ -622,6 +649,7 @@ def api_data():
         "schedule": [dict(r) for r in schedule_rows],
         "homework": [dict(r) for r in homework_rows],
         "teacher_messages": teacher_messages,
+        "reference_docs": [dict(r) for r in reference_doc_rows],
         "main_chat_message_count": main_chat_count_row["c"],
         "total_message_count": total_count_row["c"],
     })
@@ -705,6 +733,11 @@ PARENT_HTML = """<!doctype html>
   <span id="archive-arrow">▸</span> Архив домашки
 </div>
 <div id="archive" style="display:none;"></div>
+
+<div class="section-title" onclick="toggleRefDocs()" style="cursor:pointer;display:flex;align-items:center;gap:6px;">
+  <span id="refdocs-arrow">▸</span> 📋 Справочные материалы (расписание по четвертям, звонки и т.п.)
+</div>
+<div id="refdocs" style="display:none;"></div>
 
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
@@ -889,6 +922,28 @@ let hwByKey = {};
 let openHwKey = null;
 let archiveOpen = false;
 let allHomework = [];
+let refDocsOpen = false;
+let allRefDocs = [];
+
+function toggleRefDocs() {
+  refDocsOpen = !refDocsOpen;
+  document.getElementById('refdocs').style.display = refDocsOpen ? 'block' : 'none';
+  document.getElementById('refdocs-arrow').textContent = refDocsOpen ? '▾' : '▸';
+  if (refDocsOpen) renderRefDocs();
+}
+
+function renderRefDocs() {
+  const el = document.getElementById('refdocs');
+  if (!allRefDocs.length) {
+    el.innerHTML = '<div class="empty">Пока ничего не прислали</div>';
+    return;
+  }
+  el.innerHTML = allRefDocs.map(d => `
+    <div class="card">
+      <div class="meta">${d.doc_type || 'Документ'} · ${new Date(d.received_at).toLocaleDateString('ru-RU')}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;white-space:pre-wrap;">${(d.content || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>
+    </div>`).join('');
+}
 
 function toggleArchive() {
   archiveOpen = !archiveOpen;
@@ -1040,6 +1095,9 @@ async function load() {
 
   allHomework = data.homework;
   if (archiveOpen) renderArchive();
+
+  allRefDocs = data.reference_docs || [];
+  if (refDocsOpen) renderRefDocs();
 
   hwByKey = {};
   data.homework.forEach(h => {
