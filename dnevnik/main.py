@@ -585,15 +585,19 @@ PARENT_HTML = """<!doctype html>
   .cal-lesson .subj { font-weight:600; }
   .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
   .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff3b30; margin-left:5px; vertical-align:middle; }
-  .cal-lesson.has-hw { background:#fff0ef; }
+  .cal-lesson.has-hw { background:#fff0ef; cursor:pointer; }
+  #homework { display:none; }
+  #homework.open { display:block; }
+  .hw-hint { font-size:13px; color:#8e8e93; margin:-4px 0 10px; }
 </style>
 </head>
 <body>
 <h1>📋 Дневник — вид родителя</h1>
 <div id="msg-counter" style="font-size:13px;color:#8e8e93;margin:-8px 0 12px;">Загрузка...</div>
 <div class="section-title">Расписание</div>
+<div class="hw-hint">🔴 — есть домашнее задание, нажми на урок, чтобы посмотреть</div>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
-<div class="section-title">Домашнее задание (по предметам)</div>
+<div class="section-title" id="homework-title" style="display:none;"></div>
 <div id="homework"></div>
 <div class="section-title">📢 Объявления от классного руководителя (без болтовни)</div>
 <div id="teacher"></div>
@@ -607,6 +611,41 @@ function dateToDayName(dateStr) {
   if (isNaN(d)) return null;
   const idx = (d.getDay() + 6) % 7; // JS: 0=Sun -> сдвигаем на Пн=0
   return DAY_ORDER[idx];
+}
+
+let hwByKey = {};
+let openHwKey = null;
+
+function renderHwGroup(items) {
+  return items.map(h => `
+    <div class="card ${h.parent_seen ? 'seen' : ''}">
+      <div class="meta">${h.page ? 'стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
+      <div class="meta">${h.due_date ? 'Сдать: ' + h.due_date : ''}</div>
+      ${h.child_done ? '<div class="badge-child">✅ ребёнок отметил как сделано</div>' : '<div class="badge-child">⏳ ребёнок ещё не отметил</div>'}
+      <div class="row">
+        <button class="btn btn-seen ${h.parent_seen ? '' : 'off'}" onclick="markSeen(${h.id}, ${h.parent_seen ? 1 : 0})">${h.parent_seen ? '✓ Просмотрено' : 'Отметить просмотренным'}</button>
+        ${h.gdz_link ? `<a class="btn btn-link" href="${h.gdz_link}" target="_blank">Найти решение</a>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function toggleHwKey(key) {
+  const hEl = document.getElementById('homework');
+  const titleEl = document.getElementById('homework-title');
+  if (openHwKey === key) {
+    openHwKey = null;
+    hEl.classList.remove('open');
+    titleEl.style.display = 'none';
+    return;
+  }
+  openHwKey = key;
+  const [day, subject] = key.split('|');
+  titleEl.textContent = `Домашнее задание: ${subject} (${day})`;
+  titleEl.style.display = 'block';
+  hEl.innerHTML = renderHwGroup(hwByKey[key] || []);
+  hEl.classList.add('open');
+  hEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
 
 async function markSeen(id, current) {
@@ -643,9 +682,10 @@ function renderCalendar(schedule, hwDaySubjects) {
     <div class="cal-col">
       <div class="cal-day">${day}</div>
       ${byDay[day].map((s, i) => {
-        const hasHw = hwDaySubjects && hwDaySubjects.has(day + '|' + s.subject);
+        const key = day + '|' + s.subject;
+        const hasHw = hwDaySubjects && hwDaySubjects.has(key);
         return `
-        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}">
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}')"` : ''}>
           <span class="num">${i + 1}.</span><span class="subj">${s.time ? s.time + ' ' : ''}${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
@@ -666,23 +706,21 @@ async function load() {
   );
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
 
-  const hEl = document.getElementById('homework');
-  const groups = groupBySubject(data.homework);
-  const subjects = Object.keys(groups);
-  hEl.innerHTML = subjects.length ? subjects.map(subj => `
-    <div class="section-title" style="font-size:14px;color:#0071e3;">${subj}</div>
-    ${groups[subj].map(h => `
-      <div class="card ${h.parent_seen ? 'seen' : ''}">
-        <div class="meta">${h.page ? 'стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
-        <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
-        <div class="meta">${h.due_date ? 'Сдать: ' + h.due_date : ''}</div>
-        ${h.child_done ? '<div class="badge-child">✅ ребёнок отметил как сделано</div>' : '<div class="badge-child">⏳ ребёнок ещё не отметил</div>'}
-        <div class="row">
-          <button class="btn btn-seen ${h.parent_seen ? '' : 'off'}" onclick="markSeen(${h.id}, ${h.parent_seen ? 1 : 0})">${h.parent_seen ? '✓ Просмотрено' : 'Отметить просмотренным'}</button>
-          ${h.gdz_link ? `<a class="btn btn-link" href="${h.gdz_link}" target="_blank">Найти решение</a>` : ''}
-        </div>
-      </div>`).join('')}
-  `).join('') : '<div class="empty">Пока нет данных</div>';
+  hwByKey = {};
+  data.homework.forEach(h => {
+    if (!h.subject) return;
+    const day = dateToDayName(h.assigned_date);
+    const key = day + '|' + h.subject;
+    if (!hwByKey[key]) hwByKey[key] = [];
+    hwByKey[key].push(h);
+  });
+  if (openHwKey && hwByKey[openHwKey]) {
+    document.getElementById('homework').innerHTML = renderHwGroup(hwByKey[openHwKey]);
+  } else if (openHwKey) {
+    openHwKey = null;
+    document.getElementById('homework').classList.remove('open');
+    document.getElementById('homework-title').style.display = 'none';
+  }
 
   const tEl = document.getElementById('teacher');
   tEl.innerHTML = data.teacher_messages.length ? data.teacher_messages.map(m => `
