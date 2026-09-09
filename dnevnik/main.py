@@ -663,8 +663,54 @@ def _resolve_chat_id_by_name(name_query):
     return None, None
 
 
+def _seed_manual_schedule():
+    """Ручной ввод расписания с фото, присланного пользователем (частично видимая неделя)."""
+    sentinel_id = "manual-seed-schedule-1"
+    if _message_already_processed(sentinel_id):
+        return
+
+    schedule_rows = [
+        ("Понедельник", None, "Математика", "223"),
+        ("Понедельник", None, "Биология", "114"),
+        ("Понедельник", None, "Музыка", "337"),
+        ("Понедельник", None, "Наглядная геометрия", "223"),
+        ("Вторник", None, "Иностранный язык", "118/119"),
+        ("Вторник", None, "Физкультура", "сз"),
+        ("Вторник", None, "История", "330"),
+        ("Вторник", None, "География", "222"),
+        ("Вторник", None, "Математика", "223"),
+        ("Вторник", None, "Литература", "217"),
+        ("Четверг", None, "Труд", "120/327"),
+        ("Четверг", None, "Труд", "120/327"),
+        ("Четверг", None, "Литература", "217"),
+        ("Четверг", None, "ИЗО", "336"),
+        ("Четверг", None, "Математика", "223"),
+        ("Четверг", None, "Русский язык", "321"),
+    ]
+
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO messages (max_message_id, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?)",
+        (sentinel_id, "Ручной ввод расписания с фото (5в класс)", 1, datetime.datetime.utcnow().isoformat(), "{}"),
+    )
+    message_row_id = cur.lastrowid
+
+    for day, time_, subject, room in schedule_rows:
+        conn.execute(
+            "INSERT INTO schedule (week_of, day_of_week, date, time, subject, room, source_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (None, day, None, time_, subject, room, message_row_id),
+        )
+
+    conn.commit()
+    conn.close()
+    print(f"[startup] Внесено расписание вручную: {len(schedule_rows)} записей")
+
+
 def _auto_configure():
     global GREEN_API_CHAT_ID
+
+    _seed_manual_schedule()
 
     # 1. Найти chatId по имени, если id ещё не задан явно
     if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
