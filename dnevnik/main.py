@@ -524,7 +524,7 @@ def api_data():
         "ORDER BY h.due_date IS NULL, h.due_date, h.id DESC"
     ).fetchall()
     teacher_rows = conn.execute(
-        "SELECT id, sender_name, raw_text, quoted_text, has_image, received_at, parsed_json FROM messages "
+        "SELECT id, sender_name, raw_text, quoted_text, has_image, image_url, received_at, parsed_json FROM messages "
         "WHERE sender_name LIKE ? "
         "ORDER BY received_at DESC LIMIT 100",
         (f"%{TEACHER_NAME}%",),
@@ -745,6 +745,50 @@ function dateToDayName(dateStr) {
   return DAY_ORDER[idx];
 }
 
+let teacherMsgs = [];
+let expandedTeacherIds = new Set();
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+
+function renderTeacherCard(m) {
+  const expanded = expandedTeacherIds.has(m.id);
+  const badges = `${m.has_image ? ' · 📷 фото' : ''}
+        ${m.has_announcement ? ' · <b style="color:#ff9500;">📢 объявление</b>' : ''}
+        ${m.has_schedule ? ' · 📅 расписание' : ''}
+        ${m.has_homework ? ' · 📚 домашка' : ''}`;
+  const fullText = escapeHtml(m.raw_text || m.announcement_summary || '(без текста)').replace(/\n/g, '<br>');
+  const preview = escapeHtml((m.raw_text || m.announcement_summary || '(без текста)').slice(0, 70));
+  const isLong = (m.raw_text || m.announcement_summary || '').length > 70;
+
+  if (!expanded) {
+    return `
+    <div class="card" onclick="toggleTeacherMsg(${m.id})" style="cursor:pointer;">
+      <div class="meta">${new Date(m.received_at).toLocaleString('ru-RU')}${badges}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;">${preview}${isLong ? '…' : ''}</div>
+      <div class="meta" style="color:#0071e3;margin-top:4px;">Показать полностью ▾</div>
+    </div>`;
+  }
+  return `
+    <div class="card" onclick="toggleTeacherMsg(${m.id})" style="cursor:pointer;">
+      <div class="meta">${new Date(m.received_at).toLocaleString('ru-RU')}${badges}</div>
+      ${m.quoted_text ? `<div class="meta" style="font-style:italic;border-left:2px solid #d0d0d5;padding-left:8px;margin-top:4px;">В ответ на: «${escapeHtml(m.quoted_text)}»</div>` : ''}
+      <div class="subject" style="font-size:15px;font-weight:400;">${fullText}</div>
+      ${m.image_url ? `<a href="${m.image_url}" target="_blank" onclick="event.stopPropagation()"><img src="${m.image_url}" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
+      <div class="meta" style="color:#0071e3;margin-top:4px;">Свернуть ▴</div>
+    </div>`;
+}
+
+function toggleTeacherMsg(id) {
+  if (expandedTeacherIds.has(id)) {
+    expandedTeacherIds.delete(id);
+  } else {
+    expandedTeacherIds.add(id);
+  }
+  document.getElementById('teacher').innerHTML = teacherMsgs.map(renderTeacherCard).join('');
+}
+
 let hwByKey = {};
 let openHwKey = null;
 
@@ -876,16 +920,8 @@ async function load() {
   }
 
   const tEl = document.getElementById('teacher');
-  tEl.innerHTML = data.teacher_messages.length ? data.teacher_messages.map(m => `
-    <div class="card">
-      <div class="meta">${new Date(m.received_at).toLocaleString('ru-RU')}${m.has_image ? ' · 📷 фото' : ''}
-        ${m.has_announcement ? ' · <b style="color:#ff9500;">📢 объявление</b>' : ''}
-        ${m.has_schedule ? ' · 📅 расписание' : ''}
-        ${m.has_homework ? ' · 📚 домашка' : ''}
-      </div>
-      ${m.quoted_text ? `<div class="meta" style="font-style:italic;border-left:2px solid #d0d0d5;padding-left:8px;margin-top:4px;">В ответ на: «${m.quoted_text}»</div>` : ''}
-      <div class="subject" style="font-size:15px;font-weight:400;">${m.raw_text || m.announcement_summary || '(без текста)'}</div>
-    </div>`).join('') : '<div class="empty">Пока нет сообщений от классного руководителя</div>';
+  teacherMsgs = data.teacher_messages;
+  tEl.innerHTML = teacherMsgs.length ? teacherMsgs.map(renderTeacherCard).join('') : '<div class="empty">Пока нет сообщений от классного руководителя</div>';
   updateLiveTimer();
 }
 load();
