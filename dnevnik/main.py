@@ -16,6 +16,7 @@ GREEN_API_ID_INSTANCE = os.environ.get("GREEN_API_ID_INSTANCE", "")
 GREEN_API_API_TOKEN = os.environ.get("GREEN_API_API_TOKEN", "")
 GREEN_API_CHAT_ID = os.environ.get("GREEN_API_CHAT_ID", "")  # id канала родители+учитель
 GREEN_API_CHAT_NAME = os.environ.get("GREEN_API_CHAT_NAME", "")  # если id неизвестен — ищем чат по имени
+TEACHER_NAME = os.environ.get("TEACHER_NAME", "Анастасия Харькина")  # классный руководитель — для выделения её сообщений
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 GREEN_API_BASE = f"https://api.green-api.com/waInstance{GREEN_API_ID_INSTANCE}"
@@ -35,6 +36,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             max_message_id TEXT,
+            sender_name TEXT,
             raw_text TEXT,
             has_image INTEGER DEFAULT 0,
             received_at TEXT,
@@ -173,7 +175,7 @@ def _message_already_processed(max_message_id):
     return row is not None
 
 
-def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at):
+def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None):
     if _message_already_processed(max_message_id):
         return "duplicate"
 
@@ -182,8 +184,8 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
 
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO messages (max_message_id, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?)",
-        (max_message_id, text, has_image, received_at, json.dumps(parsed, ensure_ascii=False)),
+        "INSERT INTO messages (max_message_id, sender_name, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?)",
+        (max_message_id, sender_name, text, has_image, received_at, json.dumps(parsed, ensure_ascii=False)),
     )
     message_row_id = cur.lastrowid
 
@@ -233,6 +235,7 @@ def webhook_max():
 
     sender_data = payload.get("senderData", {})
     chat_id = sender_data.get("chatId", "")
+    sender_name = sender_data.get("senderContactName") or sender_data.get("senderName") or ""
 
     if GREEN_API_CHAT_ID and chat_id != GREEN_API_CHAT_ID:
         return jsonify({"ok": True, "skipped": "other chat"}), 200
@@ -266,7 +269,7 @@ def webhook_max():
     max_message_id = payload.get("idMessage", "")
     received_at = datetime.datetime.utcnow().isoformat()
 
-    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at)
+    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name)
 
     return jsonify({"ok": True, "result": result}), 200
 
@@ -323,13 +326,14 @@ def _backfill_chat_history(chat_id, max_messages=1000):
                 continue
 
             max_message_id = msg.get("idMessage", "")
+            sender_name = msg.get("senderContactName") or msg.get("senderName") or ""
             ts = msg.get("timestamp")
             received_at = (
                 datetime.datetime.utcfromtimestamp(ts).isoformat()
                 if ts else datetime.datetime.utcnow().isoformat()
             )
 
-            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at)
+            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name)
             if result == "ok":
                 processed += 1
         except Exception as e:
@@ -454,11 +458,17 @@ def api_data():
     homework_rows = conn.execute(
         "SELECT * FROM homework ORDER BY due_date IS NULL, due_date, id DESC"
     ).fetchall()
+    teacher_rows = conn.execute(
+        "SELECT id, sender_name, raw_text, has_image, received_at FROM messages "
+        "WHERE sender_name LIKE ? ORDER BY received_at DESC LIMIT 50",
+        (f"%{TEACHER_NAME}%",),
+    ).fetchall()
     conn.close()
 
     return jsonify({
         "schedule": [dict(r) for r in schedule_rows],
         "homework": [dict(r) for r in homework_rows],
+        "teacher_messages": [dict(r) for r in teacher_rows],
     })
 
 
@@ -517,6 +527,8 @@ PARENT_HTML = """<!doctype html>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 <div class="section-title">Домашнее задание (по предметам)</div>
 <div id="homework"></div>
+<div class="section-title">✏️ Сообщения от классного руководителя</div>
+<div id="teacher"></div>
 
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
@@ -585,6 +597,13 @@ async function load() {
         </div>
       </div>`).join('')}
   `).join('') : '<div class="empty">Пока нет данных</div>';
+
+  const tEl = document.getElementById('teacher');
+  tEl.innerHTML = data.teacher_messages.length ? data.teacher_messages.map(m => `
+    <div class="card">
+      <div class="meta">${new Date(m.received_at).toLocaleString('ru-RU')}${m.has_image ? ' · 📷 фото' : ''}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;">${m.raw_text || '(без текста)'}</div>
+    </div>`).join('') : '<div class="empty">Пока нет сообщений от классного руководителя</div>';
 }
 load();
 setInterval(load, 30000);
