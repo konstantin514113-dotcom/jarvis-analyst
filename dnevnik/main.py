@@ -38,6 +38,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             max_message_id TEXT,
+            chat_id TEXT,
             sender_name TEXT,
             raw_text TEXT,
             has_image INTEGER DEFAULT 0,
@@ -183,7 +184,7 @@ def _message_already_processed(max_message_id):
     return row is not None
 
 
-def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None):
+def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None):
     if _message_already_processed(max_message_id):
         return "duplicate"
 
@@ -192,8 +193,8 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
 
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO messages (max_message_id, sender_name, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?)",
-        (max_message_id, sender_name, text, has_image, received_at, json.dumps(parsed, ensure_ascii=False)),
+        "INSERT INTO messages (max_message_id, chat_id, sender_name, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (max_message_id, chat_id, sender_name, text, has_image, received_at, json.dumps(parsed, ensure_ascii=False)),
     )
     message_row_id = cur.lastrowid
 
@@ -279,7 +280,7 @@ def webhook_max():
     max_message_id = payload.get("idMessage", "")
     received_at = datetime.datetime.utcnow().isoformat()
 
-    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name)
+    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id)
     print(f"[webhook] Обработано: chatId={chat_id!r} idMessage={max_message_id!r} result={result!r} text_preview={text[:80]!r}")
 
     return jsonify({"ok": True, "result": result}), 200
@@ -344,7 +345,7 @@ def _backfill_chat_history(chat_id, max_messages=1000):
                 if ts else datetime.datetime.utcnow().isoformat()
             )
 
-            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name)
+            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id)
             if result == "ok":
                 processed += 1
         except Exception as e:
@@ -476,6 +477,11 @@ def api_data():
         "ORDER BY received_at DESC LIMIT 50",
         (f"%{TEACHER_NAME}%",),
     ).fetchall()
+    main_chat_count_row = conn.execute(
+        "SELECT COUNT(*) AS c FROM messages WHERE chat_id = ?",
+        (GREEN_API_CHAT_ID,),
+    ).fetchone()
+    total_count_row = conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()
     conn.close()
 
     teacher_messages = []
@@ -495,6 +501,8 @@ def api_data():
         "schedule": [dict(r) for r in schedule_rows],
         "homework": [dict(r) for r in homework_rows],
         "teacher_messages": teacher_messages,
+        "main_chat_message_count": main_chat_count_row["c"],
+        "total_message_count": total_count_row["c"],
     })
 
 
@@ -549,6 +557,7 @@ PARENT_HTML = """<!doctype html>
 </head>
 <body>
 <h1>📋 Дневник — вид родителя</h1>
+<div id="msg-counter" style="font-size:13px;color:#8e8e93;margin:-8px 0 12px;">Загрузка...</div>
 <div class="section-title">Расписание</div>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 <div class="section-title">Домашнее задание (по предметам)</div>
@@ -603,6 +612,9 @@ function renderCalendar(schedule) {
 async function load() {
   const res = await fetch('/api/data');
   const data = await res.json();
+
+  document.getElementById('msg-counter').textContent =
+    `Сообщений из «5в класс»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
 
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule);
 
