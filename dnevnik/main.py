@@ -863,16 +863,14 @@ def _auto_configure():
         except Exception as e:
             print(f"[startup] Не удалось зарегистрировать вебхук: {e}")
 
-    # 3. Если это первый запуск (в базе ещё нет сообщений) — подтягиваем всю историю чата
-    if GREEN_API_CHAT_ID:
-        conn = get_db()
-        count_row = conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()
-        conn.close()
-        if count_row["c"] == 0:
-            print("[startup] База пуста — запускаю загрузку истории чата с начала (в фоне)...")
+    # 3. Подтягиваем историю из всех источников (main + extras) в фоне. _process_and_store
+    #    дедуплицирует по max_message_id, так что повторные запуски дёшевы.
+    if ALLOWED_CHAT_IDS:
+        print(f"[startup] Запускаю загрузку истории для {len(ALLOWED_CHAT_IDS)} чат(ов) (в фоне)...")
+        for cid in ALLOWED_CHAT_IDS:
             threading.Thread(
                 target=_backfill_chat_history,
-                args=(GREEN_API_CHAT_ID,),
+                args=(cid,),
                 kwargs={"max_messages": 1000},
                 daemon=True,
             ).start()
