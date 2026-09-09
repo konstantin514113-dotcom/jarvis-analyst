@@ -727,6 +727,8 @@ function bellRangeFor(dayName, lessonNum) {
   return `${fmtHM(b[0])}–${fmtHM(b[1])}`;
 }
 
+let todayLessonCount = null;
+
 function getLiveStatus() {
   const now = new Date();
   const dow = now.getDay(); // 0=Вс, 1=Пн ... 6=Сб
@@ -736,11 +738,12 @@ function getLiveStatus() {
   if (dow === 0) return { type: 'none', dayName, label: 'Сегодня воскресенье, уроков нет' };
 
   const bells = dow === 6 ? BELLS_SATURDAY : BELLS_WEEKDAY;
+  const maxLessons = todayLessonCount != null ? todayLessonCount : bells.length;
 
   if (nowMin < bells[0][0]) {
     return { type: 'before', dayName, remainingMin: bells[0][0] - nowMin, nextIndex: 1 };
   }
-  for (let i = 0; i < bells.length; i++) {
+  for (let i = 0; i < bells.length && i < maxLessons; i++) {
     const [start, end] = bells[i];
     if (nowMin >= start && nowMin < end) {
       return {
@@ -749,7 +752,7 @@ function getLiveStatus() {
         progress: ((nowMin - start) / (end - start)) * 100,
       };
     }
-    if (i < bells.length - 1) {
+    if (i < maxLessons - 1) {
       const nextStart = bells[i + 1][0];
       if (nowMin >= end && nowMin < nextStart) {
         return {
@@ -1017,6 +1020,9 @@ async function load() {
 
   document.getElementById('msg-counter').textContent =
     `Сообщений из «5в класс»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
+
+  const todayName = DAY_ORDER[(new Date().getDay() + 6) % 7];
+  todayLessonCount = data.schedule.filter(s => s.day_of_week === todayName).length || null;
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
