@@ -597,12 +597,19 @@ PARENT_HTML = """<!doctype html>
   .cal { display:grid; grid-auto-flow:column; gap:6px; }
   .cal-col { background:#fff; border-radius:12px; padding:8px; width:31vw; min-width:100px; max-width:150px; box-shadow:0 1px 3px rgba(0,0,0,.06); scroll-snap-align:center; flex-shrink:0; }
   .cal-day { font-weight:700; font-size:13px; color:#0071e3; text-transform:uppercase; text-align:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #eee; }
-  .cal-lesson { background:#f5f5f7; border-radius:8px; padding:6px 8px; margin-bottom:6px; font-size:13px; }
+  .cal-lesson { background:#f5f5f7; border-radius:8px; padding:6px 8px; margin-bottom:6px; font-size:13px; min-height:44px; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; }
   .cal-lesson .num { color:#8e8e93; font-size:11px; margin-right:4px; }
   .cal-lesson .subj { font-weight:600; }
   .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
   .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff3b30; margin-left:5px; vertical-align:middle; }
   .cal-lesson.has-hw { background:#fff0ef; cursor:pointer; }
+  .cal-lesson.active-lesson { border:2px solid #0071e3; }
+  .lesson-progress-track { height:4px; background:#e5e5ea; border-radius:2px; margin-top:5px; overflow:hidden; }
+  .lesson-progress-fill { height:100%; background:#0071e3; border-radius:2px; transition:width 1s linear; }
+  .lesson-progress-text { font-size:10px; color:#0071e3; margin-top:2px; font-weight:600; }
+  #live-status { background:#0071e3; color:#fff; border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:14px; display:none; }
+  #live-status .live-bar-track { height:5px; background:rgba(255,255,255,.35); border-radius:3px; margin-top:6px; overflow:hidden; }
+  #live-status .live-bar-fill { height:100%; background:#fff; border-radius:3px; transition:width 1s linear; }
   #homework { display:none; }
   #homework.open { display:block; }
   .hw-hint { font-size:13px; color:#8e8e93; margin:-4px 0 10px; }
@@ -612,6 +619,7 @@ PARENT_HTML = """<!doctype html>
 <h1>📋 Дневник — вид родителя</h1>
 <div id="msg-counter" style="font-size:13px;color:#8e8e93;margin:-8px 0 12px;">Загрузка...</div>
 <div class="section-title">Расписание</div>
+<div id="live-status"></div>
 <div class="hw-hint">🔴 — есть домашнее задание, нажми на урок, чтобы посмотреть</div>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 <div class="section-title" id="homework-title" style="display:none;"></div>
@@ -621,6 +629,96 @@ PARENT_HTML = """<!doctype html>
 
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
+
+// Расписание звонков (в минутах от полуночи)
+const BELLS_WEEKDAY = [
+  [510, 550], [570, 610], [630, 670], [690, 730], [740, 780], [800, 840], [850, 890], [900, 940]
+]; // 08:30-09:10, 09:30-10:10, ... 15:00-15:40
+const BELLS_SATURDAY = [
+  [510, 545], [555, 590], [610, 645], [655, 690], [700, 735], [745, 780]
+]; // 08:30-09:05 ... 12:25-13:00
+
+function getLiveStatus() {
+  const now = new Date();
+  const dow = now.getDay(); // 0=Вс, 1=Пн ... 6=Сб
+  const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const dayName = DAY_ORDER[(dow + 6) % 7];
+
+  if (dow === 0) return { type: 'none', dayName, label: 'Сегодня воскресенье, уроков нет' };
+
+  const bells = dow === 6 ? BELLS_SATURDAY : BELLS_WEEKDAY;
+
+  if (nowMin < bells[0][0]) {
+    return { type: 'before', dayName, remainingMin: bells[0][0] - nowMin, nextIndex: 1 };
+  }
+  for (let i = 0; i < bells.length; i++) {
+    const [start, end] = bells[i];
+    if (nowMin >= start && nowMin < end) {
+      return {
+        type: 'lesson', dayName, index: i + 1,
+        remainingMin: end - nowMin,
+        progress: ((nowMin - start) / (end - start)) * 100,
+      };
+    }
+    if (i < bells.length - 1) {
+      const nextStart = bells[i + 1][0];
+      if (nowMin >= end && nowMin < nextStart) {
+        return {
+          type: 'break', dayName, afterIndex: i + 1, nextIndex: i + 2,
+          remainingMin: nextStart - nowMin,
+          progress: ((nowMin - end) / (nextStart - end)) * 100,
+        };
+      }
+    }
+  }
+  return { type: 'after', dayName, label: 'Уроки на сегодня закончились' };
+}
+
+function updateLiveTimer() {
+  const st = getLiveStatus();
+  const el = document.getElementById('live-status');
+
+  document.querySelectorAll('.cal-lesson.active-lesson').forEach(n => n.classList.remove('active-lesson'));
+  document.querySelectorAll('.lesson-progress-track').forEach(n => n.style.display = 'none');
+
+  if (st.type === 'none' || st.type === 'after') {
+    el.style.display = 'block';
+    el.innerHTML = `<div>${st.label}</div>`;
+    return;
+  }
+  if (st.type === 'before') {
+    el.style.display = 'block';
+    el.innerHTML = `<div>До начала уроков (${st.dayName.toLowerCase()}): ${Math.ceil(st.remainingMin)} мин</div>`;
+    return;
+  }
+  if (st.type === 'lesson') {
+    const col = document.querySelector(`.cal-col[data-day="${st.dayName}"]`);
+    const lessonEl = col ? col.querySelector(`.cal-lesson[data-lesson-num="${st.index}"]`) : null;
+    const subj = lessonEl ? lessonEl.querySelector('.subj').textContent.replace(/^\d+:\d+\s*/, '') : '';
+    el.style.display = 'block';
+    el.innerHTML = `<div>📖 Идёт урок ${st.index}${subj ? ' — ' + subj : ''} · осталось ${Math.ceil(st.remainingMin)} мин</div>
+      <div class="live-bar-track"><div class="live-bar-fill" style="width:${st.progress}%"></div></div>`;
+    if (lessonEl) {
+      lessonEl.classList.add('active-lesson');
+      let track = lessonEl.querySelector('.lesson-progress-track');
+      if (!track) {
+        track = document.createElement('div');
+        track.className = 'lesson-progress-track';
+        track.innerHTML = '<div class="lesson-progress-fill"></div>';
+        lessonEl.appendChild(track);
+      }
+      track.style.display = 'block';
+      track.querySelector('.lesson-progress-fill').style.width = st.progress + '%';
+    }
+    return;
+  }
+  if (st.type === 'break') {
+    el.style.display = 'block';
+    el.innerHTML = `<div>☕ Идёт перемена · до ${st.nextIndex}-го урока осталось ${Math.ceil(st.remainingMin)} мин</div>
+      <div class="live-bar-track"><div class="live-bar-fill" style="width:${st.progress}%"></div></div>`;
+  }
+}
+
 
 function dateToDayName(dateStr) {
   if (!dateStr) return null;
@@ -717,7 +815,7 @@ function renderCalendar(schedule, hwDaySubjects) {
         const key = day + '|' + s.subject;
         const hasHw = hwDaySubjects && hwDaySubjects.has(key);
         return `
-        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}')"` : ''}>
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${i + 1}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}')"` : ''}>
           <span class="num">${i + 1}.</span><span class="subj">${s.time ? s.time + ' ' : ''}${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
@@ -769,9 +867,12 @@ async function load() {
       ${m.quoted_text ? `<div class="meta" style="font-style:italic;border-left:2px solid #d0d0d5;padding-left:8px;margin-top:4px;">В ответ на: «${m.quoted_text}»</div>` : ''}
       <div class="subject" style="font-size:15px;font-weight:400;">${m.raw_text || m.announcement_summary || '(без текста)'}</div>
     </div>`).join('') : '<div class="empty">Пока нет сообщений от классного руководителя</div>';
+  updateLiveTimer();
 }
 load();
 setInterval(load, 30000);
+updateLiveTimer();
+setInterval(updateLiveTimer, 1000);
 </script>
 </body>
 </html>"""
