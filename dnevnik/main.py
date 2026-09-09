@@ -576,9 +576,9 @@ PARENT_HTML = """<!doctype html>
   .btn-seen.off { background:#e5e5ea; color:#1c1c1e; }
   .btn-link { background:#f0f0f5; color:#0071e3; text-decoration:none; display:inline-block; }
   .badge-child { font-size:12px; color:#ff9500; margin-top:4px; }
-  .cal-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:8px; }
-  .cal { display:grid; grid-auto-flow:column; gap:8px; min-width:600px; }
-  .cal-col { background:#fff; border-radius:12px; padding:10px; min-width:130px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .cal-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:8px; scroll-snap-type:x proximity; }
+  .cal { display:grid; grid-auto-flow:column; gap:6px; }
+  .cal-col { background:#fff; border-radius:12px; padding:8px; width:31vw; min-width:100px; max-width:150px; box-shadow:0 1px 3px rgba(0,0,0,.06); scroll-snap-align:center; flex-shrink:0; }
   .cal-day { font-weight:700; font-size:13px; color:#0071e3; text-transform:uppercase; text-align:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #eee; }
   .cal-lesson { background:#f5f5f7; border-radius:8px; padding:6px 8px; margin-bottom:6px; font-size:13px; }
   .cal-lesson .num { color:#8e8e93; font-size:11px; margin-right:4px; }
@@ -617,7 +617,9 @@ let hwByKey = {};
 let openHwKey = null;
 
 function renderHwGroup(items) {
-  return items.map(h => `
+  return `
+    <button class="btn btn-seen" style="background:#8e8e93;margin-bottom:10px;" onclick="closeHwPanel()">✕ Свернуть</button>
+    ` + items.map(h => `
     <div class="card ${h.parent_seen ? 'seen' : ''}">
       <div class="meta">${h.page ? 'стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
       <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
@@ -630,13 +632,17 @@ function renderHwGroup(items) {
     </div>`).join('');
 }
 
+function closeHwPanel() {
+  openHwKey = null;
+  document.getElementById('homework').classList.remove('open');
+  document.getElementById('homework-title').style.display = 'none';
+}
+
 function toggleHwKey(key) {
   const hEl = document.getElementById('homework');
   const titleEl = document.getElementById('homework-title');
   if (openHwKey === key) {
-    openHwKey = null;
-    hEl.classList.remove('open');
-    titleEl.style.display = 'none';
+    closeHwPanel();
     return;
   }
   openHwKey = key;
@@ -646,6 +652,14 @@ function toggleHwKey(key) {
   hEl.innerHTML = renderHwGroup(hwByKey[key] || []);
   hEl.classList.add('open');
   hEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+function scrollToToday() {
+  const todayName = dateToDayName(new Date().toISOString().slice(0, 10));
+  const col = document.querySelector(`.cal-col[data-day="${todayName}"]`);
+  if (col) {
+    col.scrollIntoView({behavior: 'auto', inline: 'center', block: 'nearest'});
+  }
 }
 
 async function markSeen(id, current) {
@@ -679,7 +693,7 @@ function renderCalendar(schedule, hwDaySubjects) {
   });
   if (!days.length) return '<div class="empty">Пока нет данных</div>';
   return days.map(day => `
-    <div class="cal-col">
+    <div class="cal-col" data-day="${day}">
       <div class="cal-day">${day}</div>
       ${byDay[day].map((s, i) => {
         const key = day + '|' + s.subject;
@@ -705,6 +719,10 @@ async function load() {
       .map(h => dateToDayName(h.assigned_date) + '|' + h.subject)
   );
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
+  if (!window.__scrolledToday) {
+    window.__scrolledToday = true;
+    setTimeout(scrollToToday, 50);
+  }
 
   hwByKey = {};
   data.homework.forEach(h => {
