@@ -80,12 +80,16 @@ init_db()
 # ---------- LLM parsing (text + image) ----------
 
 PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурированные данные из сообщений школьного чата (родители+учитель).
-Сообщение (текст и/или фото/скриншот переписки) может содержать: расписание уроков на неделю/день, домашнее задание, или ничего полезного.
+Сообщение (текст и/или фото/скриншот переписки) может содержать: расписание уроков на неделю/день, домашнее задание,
+важное объявление от учителя (собрание, сбор денег, мероприятие, изменение в расписании и т.п.), или обычную болтовню/несущественное.
 
 Верни СТРОГО JSON, без пояснений, без markdown, в формате:
 {
   "has_schedule": true/false,
   "has_homework": true/false,
+  "has_announcement": true/false,
+  "announcement_summary": "краткое содержание объявления одним предложением, или null",
+  "is_chatter": true/false,
   "schedule": [
     {"day_of_week": "Понедельник", "date": "YYYY-MM-DD или null", "time": "8:30 или null", "subject": "Математика", "room": "каб. 12 или null"}
   ],
@@ -94,9 +98,11 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
   ]
 }
 
-Если дата не указана явно текстом, оставь date как null, не угадывай.
-Если сообщение/фото не содержит ни расписания, ни домашки — верни has_schedule и has_homework оба false, пустые списки.
-Если это скриншот переписки — вычленяй только полезную информацию о расписании/домашке, игнорируй смайлики и болтовню.
+Правила:
+- is_chatter = true, если сообщение НЕ содержит ни расписания, ни домашки, ни важного объявления — это обычное общение, эмодзи, реакции, благодарности, организационные мелочи без конкретики.
+- has_announcement = true только для содержательных объявлений от учителя (не от родителей): собрания, сборы, мероприятия, важные изменения. Обычные "спасибо"/"хорошо" — это НЕ объявление.
+- Если дата не указана явно текстом, оставь date как null, не угадывай.
+- Если это скриншот переписки — вычленяй только полезную информацию, игнорируй смайлики и болтовню на фото.
 """
 
 
@@ -459,16 +465,31 @@ def api_data():
         "SELECT * FROM homework ORDER BY due_date IS NULL, due_date, id DESC"
     ).fetchall()
     teacher_rows = conn.execute(
-        "SELECT id, sender_name, raw_text, has_image, received_at FROM messages "
-        "WHERE sender_name LIKE ? ORDER BY received_at DESC LIMIT 50",
+        "SELECT id, sender_name, raw_text, has_image, received_at, parsed_json FROM messages "
+        "WHERE sender_name LIKE ? "
+        "AND (json_extract(parsed_json, '$.is_chatter') IS NOT 1) "
+        "ORDER BY received_at DESC LIMIT 50",
         (f"%{TEACHER_NAME}%",),
     ).fetchall()
     conn.close()
 
+    teacher_messages = []
+    for r in teacher_rows:
+        row = dict(r)
+        try:
+            parsed = json.loads(row.pop("parsed_json") or "{}")
+        except json.JSONDecodeError:
+            parsed = {}
+        row["has_announcement"] = bool(parsed.get("has_announcement"))
+        row["announcement_summary"] = parsed.get("announcement_summary")
+        row["has_schedule"] = bool(parsed.get("has_schedule"))
+        row["has_homework"] = bool(parsed.get("has_homework"))
+        teacher_messages.append(row)
+
     return jsonify({
         "schedule": [dict(r) for r in schedule_rows],
         "homework": [dict(r) for r in homework_rows],
-        "teacher_messages": [dict(r) for r in teacher_rows],
+        "teacher_messages": teacher_messages,
     })
 
 
@@ -527,7 +548,7 @@ PARENT_HTML = """<!doctype html>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 <div class="section-title">Домашнее задание (по предметам)</div>
 <div id="homework"></div>
-<div class="section-title">✏️ Сообщения от классного руководителя</div>
+<div class="section-title">📢 Объявления от классного руководителя (без болтовни)</div>
 <div id="teacher"></div>
 
 <script>
@@ -601,9 +622,13 @@ async function load() {
   const tEl = document.getElementById('teacher');
   tEl.innerHTML = data.teacher_messages.length ? data.teacher_messages.map(m => `
     <div class="card">
-      <div class="meta">${new Date(m.received_at).toLocaleString('ru-RU')}${m.has_image ? ' · 📷 фото' : ''}</div>
-      <div class="subject" style="font-size:15px;font-weight:400;">${m.raw_text || '(без текста)'}</div>
-    </div>`).join('') : '<div class="empty">Пока нет сообщений от классного руководителя</div>';
+      <div class="meta">${new Date(m.received_at).toLocaleString('ru-RU')}${m.has_image ? ' · 📷 фото' : ''}
+        ${m.has_announcement ? ' · <b style="color:#ff9500;">📢 объявление</b>' : ''}
+        ${m.has_schedule ? ' · 📅 расписание' : ''}
+        ${m.has_homework ? ' · 📚 домашка' : ''}
+      </div>
+      <div class="subject" style="font-size:15px;font-weight:400;">${m.announcement_summary || m.raw_text || '(без текста)'}</div>
+    </div>`).join('') : '<div class="empty">Пока нет объявлений от классного руководителя</div>';
 }
 load();
 setInterval(load, 30000);
