@@ -1218,41 +1218,191 @@ CHILD_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Дневник {{ student_name }} — {{ class_name }}</title>
 <style>
-  body { font-family: -apple-system, sans-serif; background:#fff9f0; margin:0; padding:16px; color:#1c1c1e; }
-  h1 { font-size:22px; margin:0 0 18px; }
-  .card { background:#fff; border:2px solid #ffe0a3; border-radius:16px; padding:16px; margin-bottom:12px; }
-  .card.done { background:#eafbea; border-color:#b7e8b7; }
-  .subject { font-size:19px; font-weight:700; }
-  .task { font-size:16px; margin-top:6px; }
-  .due { font-size:14px; color:#8e8e93; margin-top:4px; }
-  button { margin-top:10px; border:none; border-radius:10px; padding:8px 14px; font-size:15px; background:#34c759; color:#fff; }
-  .empty { color:#8e8e93; font-size:15px; }
-  .cal-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:8px; }
-  .cal { display:grid; grid-auto-flow:column; gap:8px; min-width:600px; }
-  .cal-col { background:#fff; border:2px solid #ffe0a3; border-radius:14px; padding:10px; min-width:130px; }
-  .cal-day { font-weight:700; font-size:13px; color:#ff9500; text-transform:uppercase; text-align:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #ffe0a3; }
-  .cal-lesson { background:#fff9f0; border-radius:8px; padding:6px 8px; margin-bottom:6px; font-size:13px; }
-  .cal-lesson .num { color:#c99a4a; font-size:11px; margin-right:4px; }
+  body { font-family: -apple-system, sans-serif; background:#f5f5f7; margin:0; padding:16px; color:#1c1c1e; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .card { background:#fff; border-radius:12px; padding:14px 16px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .card.seen { border-left:4px solid #34c759; }
+  .day { font-weight:600; color:#0071e3; font-size:13px; text-transform:uppercase; margin-bottom:6px; }
+  .subject { font-size:16px; font-weight:600; }
+  .meta { font-size:13px; color:#8e8e93; margin-top:2px; }
+  .section-title { font-size:15px; font-weight:700; margin:22px 0 10px; }
+  .empty { color:#8e8e93; font-size:14px; padding:12px 0; }
+  .row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .btn { border:none; border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; }
+  .btn-seen { background:#34c759; color:#fff; }
+  .btn-seen.off { background:#e5e5ea; color:#1c1c1e; }
+  .btn-link { background:#f0f0f5; color:#0071e3; text-decoration:none; display:inline-block; }
+  .badge-child { font-size:12px; color:#ff9500; margin-top:4px; }
+  .cal-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:8px; scroll-snap-type:x proximity; }
+  .cal { display:grid; grid-auto-flow:column; gap:6px; }
+  .cal-col { background:#fff; border-radius:12px; padding:8px; width:31vw; min-width:100px; max-width:150px; box-shadow:0 1px 3px rgba(0,0,0,.06); scroll-snap-align:center; flex-shrink:0; }
+  .cal-day { font-weight:700; font-size:13px; color:#0071e3; text-transform:uppercase; text-align:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #eee; }
+  .cal-lesson { background:#f5f5f7; border-radius:8px; padding:6px 8px; margin-bottom:6px; font-size:13px; min-height:44px; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; }
+  .cal-lesson .num { color:#8e8e93; font-size:11px; margin-right:4px; }
   .cal-lesson .subj { font-weight:600; }
   .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
+  .cal-lesson .lesson-time { color:#0071e3; font-size:11px; margin-top:1px; font-weight:600; }
   .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff3b30; margin-left:5px; vertical-align:middle; }
-  .cal-lesson.has-hw { background:#ffe9e6; }
+  .cal-lesson.has-hw { background:#fff0ef; cursor:pointer; }
+  .cal-lesson.active-lesson { border:2px solid #0071e3; }
+  .lesson-progress-track { height:4px; background:#e5e5ea; border-radius:2px; margin-top:5px; overflow:hidden; }
+  .lesson-progress-fill { height:100%; background:#0071e3; border-radius:2px; transition:width 1s linear; }
+  .lesson-progress-text { font-size:10px; color:#0071e3; margin-top:2px; font-weight:600; }
+  #live-status { background:#0071e3; color:#fff; border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:14px; display:none; }
+  #live-status .live-bar-track { height:5px; background:rgba(255,255,255,.35); border-radius:3px; margin-top:6px; overflow:hidden; }
+  #live-status .live-bar-fill { height:100%; background:#fff; border-radius:3px; transition:width 1s linear; }
+  #homework { display:none; }
+  #homework.open { display:block; }
+  .hw-hint { font-size:13px; color:#8e8e93; margin:-4px 0 10px; }
 </style>
 </head>
 <body>
-<h1>🎒 Домашнее задание — {{ student_name }} ({{ class_name }})</h1>
-<div id="homework"></div>
-<h1 style="margin-top:28px;">📅 Расписание</h1>
+<h1>📋 Дневник {{ student_name }} — {{ class_name }}</h1>
+<div id="msg-counter" style="font-size:13px;color:#8e8e93;margin:-8px 0 12px;">Загрузка...</div>
+<div class="section-title">Расписание</div>
+<div id="live-status"></div>
+<div class="hw-hint">🔴 — есть домашнее задание, нажми на урок, чтобы посмотреть</div>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
+<div class="section-title" id="homework-title" style="display:none;"></div>
+<div id="homework"></div>
+<div class="section-title">📢 Сообщения классного руководителя</div>
+<div id="teacher"></div>
+
+<div class="section-title" onclick="toggleArchive()" style="cursor:pointer;display:flex;align-items:center;gap:6px;">
+  <span id="archive-arrow">▸</span> Архив домашки
+</div>
+<div id="archive" style="display:none;"></div>
+
+<div class="section-title" onclick="toggleRefDocs()" style="cursor:pointer;display:flex;align-items:center;gap:6px;">
+  <span id="refdocs-arrow">▸</span> 📋 Справочные материалы (расписание по четвертям, звонки и т.п.)
+</div>
+<div id="refdocs" style="display:none;"></div>
 
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
+
+// Расписание звонков (в минутах от полуночи)
+const BELLS_WEEKDAY = [
+  [510, 550], [570, 610], [630, 670], [690, 730], [740, 780], [800, 840], [850, 890], [900, 940]
+]; // 08:30-09:10, 09:30-10:10, ... 15:00-15:40
+const BELLS_SATURDAY = [
+  [510, 545], [555, 590], [610, 645], [655, 690], [700, 735], [745, 780]
+]; // 08:30-09:05 ... 12:25-13:00
+
+function fmtHM(totalMin) {
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  return `${h}:${m < 10 ? '0' : ''}${m}`;
+}
+
+function bellRangeFor(dayName, lessonNum) {
+  const bells = dayName === 'Суббота' ? BELLS_SATURDAY : BELLS_WEEKDAY;
+  const b = bells[lessonNum - 1];
+  if (!b) return null;
+  return `${fmtHM(b[0])}–${fmtHM(b[1])}`;
+}
+
+let todayLessonCount = null;
+let todayLessonNums = null;
+
+function getLiveStatus() {
+  const now = new Date();
+  const dow = now.getDay(); // 0=Вс, 1=Пн ... 6=Сб
+  const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const dayName = DAY_ORDER[(dow + 6) % 7];
+
+  if (dow === 0) return { type: 'none', dayName, label: 'Сегодня воскресенье, уроков нет' };
+
+  const bells = dow === 6 ? BELLS_SATURDAY : BELLS_WEEKDAY;
+  const maxLessons = todayLessonCount != null ? todayLessonCount : bells.length;
+
+  // Список реально существующих сегодня уроков (пропускаем "дыры" в расписании)
+  const periods = [];
+  for (let i = 0; i < bells.length && i < maxLessons; i++) {
+    if (!todayLessonNums || todayLessonNums.has(i + 1)) {
+      periods.push({ num: i + 1, start: bells[i][0], end: bells[i][1] });
+    }
+  }
+  if (!periods.length) {
+    return { type: 'after', dayName, label: 'Сегодня уроков нет' };
+  }
+
+  if (nowMin < periods[0].start) {
+    return { type: 'before', dayName, remainingMin: periods[0].start - nowMin, nextIndex: periods[0].num };
+  }
+  for (let i = 0; i < periods.length; i++) {
+    const p = periods[i];
+    if (nowMin >= p.start && nowMin < p.end) {
+      return {
+        type: 'lesson', dayName, index: p.num,
+        remainingMin: p.end - nowMin,
+        progress: ((nowMin - p.start) / (p.end - p.start)) * 100,
+      };
+    }
+    if (i < periods.length - 1) {
+      const next = periods[i + 1];
+      if (nowMin >= p.end && nowMin < next.start) {
+        return {
+          type: 'break', dayName, afterIndex: p.num, nextIndex: next.num,
+          remainingMin: next.start - nowMin,
+          progress: ((nowMin - p.end) / (next.start - p.end)) * 100,
+        };
+      }
+    }
+  }
+  return { type: 'after', dayName, label: 'Уроки на сегодня закончились' };
+}
+
+function updateLiveTimer() {
+  const st = getLiveStatus();
+  const el = document.getElementById('live-status');
+
+  document.querySelectorAll('.cal-lesson.active-lesson').forEach(n => n.classList.remove('active-lesson'));
+  document.querySelectorAll('.lesson-progress-track').forEach(n => n.style.display = 'none');
+
+  if (st.type === 'none' || st.type === 'after') {
+    el.style.display = 'block';
+    el.innerHTML = `<div>${st.label}</div>`;
+    return;
+  }
+  if (st.type === 'before') {
+    el.style.display = 'block';
+    el.innerHTML = `<div>До начала уроков (${st.dayName.toLowerCase()}): ${Math.ceil(st.remainingMin)} мин</div>`;
+    return;
+  }
+  if (st.type === 'lesson') {
+    const col = document.querySelector(`.cal-col[data-day="${st.dayName}"]`);
+    const lessonEl = col ? col.querySelector(`.cal-lesson[data-lesson-num="${st.index}"]`) : null;
+    const subj = lessonEl ? lessonEl.querySelector('.subj').textContent : '';
+    el.style.display = 'block';
+    el.innerHTML = `<div>📖 Идёт урок ${st.index}${subj ? ' — ' + subj : ''} · осталось ${Math.ceil(st.remainingMin)} мин</div>
+      <div class="live-bar-track"><div class="live-bar-fill" style="width:${st.progress}%"></div></div>`;
+    if (lessonEl) {
+      lessonEl.classList.add('active-lesson');
+      let track = lessonEl.querySelector('.lesson-progress-track');
+      if (!track) {
+        track = document.createElement('div');
+        track.className = 'lesson-progress-track';
+        track.innerHTML = '<div class="lesson-progress-fill"></div>';
+        lessonEl.appendChild(track);
+      }
+      track.style.display = 'block';
+      track.querySelector('.lesson-progress-fill').style.width = st.progress + '%';
+    }
+    return;
+  }
+  if (st.type === 'break') {
+    el.style.display = 'block';
+    el.innerHTML = `<div>☕ Идёт перемена · до ${st.nextIndex}-го урока осталось ${Math.ceil(st.remainingMin)} мин</div>
+      <div class="live-bar-track"><div class="live-bar-fill" style="width:${st.progress}%"></div></div>`;
+  }
+}
+
 
 function dateToDayName(dateStr) {
   if (!dateStr) return null;
   const d = new Date(dateStr + 'T00:00:00');
   if (isNaN(d)) return null;
-  const idx = (d.getDay() + 6) % 7;
+  const idx = (d.getDay() + 6) % 7; // JS: 0=Sun -> сдвигаем на Пн=0
   return DAY_ORDER[idx];
 }
 
@@ -1268,12 +1418,178 @@ function dateNumForDay(dayName) {
   return target.getDate();
 }
 
-async function toggleDone(id, done) {
-  await fetch(`{{ api_base }}/api/homework/${id}/mark`, {
+function normalizeSubject(s) {
+  if (!s) return '';
+  const t = s.toLowerCase();
+  if (t.includes('англ') || t.includes('ин.яз') || t.includes('иностран') || t.includes('инф')) return 'язык/инф';
+  if (t.includes('геомет')) return 'геометрия';
+  if (t.includes('математ') || t.includes('прмз') || t.includes('алгебр')) return 'математика';
+  return t.replace(/[^а-яё]/g, '');
+}
+
+let teacherMsgs = [];
+let expandedTeacherIds = new Set();
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+
+function renderTeacherCard(m) {
+  const expanded = expandedTeacherIds.has(m.id);
+  const badges = `${m.has_image ? ' · 📷 фото' : ''}
+        ${m.has_announcement ? ' · <b style="color:#ff9500;">📢 объявление</b>' : ''}
+        ${m.has_schedule ? ' · 📅 расписание' : ''}
+        ${m.has_homework ? ' · 📚 домашка' : ''}`;
+  const fullText = escapeHtml(m.raw_text || m.announcement_summary || '(без текста)').replace(/\\n/g, '<br>');
+  const preview = escapeHtml((m.raw_text || m.announcement_summary || '(без текста)').slice(0, 70));
+  const isLong = (m.raw_text || m.announcement_summary || '').length > 70;
+
+  if (!expanded) {
+    return `
+    <div class="card" onclick="toggleTeacherMsg(${m.id})" style="cursor:pointer;">
+      <div class="meta">${new Date(m.received_at).toLocaleString('ru-RU')}${badges}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;">${preview}${isLong ? '…' : ''}</div>
+      <div class="meta" style="color:#0071e3;margin-top:4px;">Показать полностью ▾</div>
+    </div>`;
+  }
+  return `
+    <div class="card" onclick="toggleTeacherMsg(${m.id})" style="cursor:pointer;">
+      <div class="meta">${new Date(m.received_at).toLocaleString('ru-RU')}${badges}</div>
+      ${m.quoted_text ? `<div class="meta" style="font-style:italic;border-left:2px solid #d0d0d5;padding-left:8px;margin-top:4px;">В ответ на: «${escapeHtml(m.quoted_text)}»</div>` : ''}
+      <div class="subject" style="font-size:15px;font-weight:400;">${fullText}</div>
+      ${m.image_url ? `<a href="${m.image_url}" target="_blank" onclick="event.stopPropagation()"><img src="${m.image_url}" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
+      <div class="meta" style="color:#0071e3;margin-top:4px;">Свернуть ▴</div>
+    </div>`;
+}
+
+function toggleTeacherMsg(id) {
+  if (expandedTeacherIds.has(id)) {
+    expandedTeacherIds.delete(id);
+  } else {
+    expandedTeacherIds.add(id);
+  }
+  document.getElementById('teacher').innerHTML = teacherMsgs.map(renderTeacherCard).join('');
+}
+
+let hwByKey = {};
+let openHwKey = null;
+let archiveOpen = false;
+let allHomework = [];
+let refDocsOpen = false;
+let allRefDocs = [];
+
+function toggleRefDocs() {
+  refDocsOpen = !refDocsOpen;
+  document.getElementById('refdocs').style.display = refDocsOpen ? 'block' : 'none';
+  document.getElementById('refdocs-arrow').textContent = refDocsOpen ? '▾' : '▸';
+  if (refDocsOpen) renderRefDocs();
+}
+
+function renderRefDocs() {
+  const el = document.getElementById('refdocs');
+  if (!allRefDocs.length) {
+    el.innerHTML = '<div class="empty">Пока ничего не прислали</div>';
+    return;
+  }
+  el.innerHTML = allRefDocs.map(d => `
+    <div class="card">
+      <div class="meta">${d.doc_type || 'Документ'} · ${new Date(d.received_at).toLocaleDateString('ru-RU')}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;white-space:pre-wrap;">${(d.content || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>
+    </div>`).join('');
+}
+
+function toggleArchive() {
+  archiveOpen = !archiveOpen;
+  document.getElementById('archive').style.display = archiveOpen ? 'block' : 'none';
+  document.getElementById('archive-arrow').textContent = archiveOpen ? '▾' : '▸';
+  if (archiveOpen) renderArchive();
+}
+
+function renderArchive() {
+  const el = document.getElementById('archive');
+  if (!allHomework.length) {
+    el.innerHTML = '<div class="empty">Пока нет заданий</div>';
+    return;
+  }
+  const byDate = {};
+  allHomework.forEach(h => {
+    const d = h.assigned_date || 'без даты';
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(h);
+  });
+  const dates = Object.keys(byDate).sort().reverse();
+  el.innerHTML = dates.map(d => `
+    <div class="section-title" style="font-size:13px;color:#8e8e93;margin:14px 0 8px;">${d === 'без даты' ? d : new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', {day:'numeric', month:'long', weekday:'long'})}</div>
+    ${byDate[d].map(h => `
+    <div class="card ${h.child_done ? 'seen' : ''}">
+      <div class="meta">${h.subject || ''}${h.page ? ' · стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
+      ${h.source_image_url ? `<a href="${h.source_image_url}" target="_blank"><img src="${h.source_image_url}" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
+      ${h.child_done ? '<div class="badge-child">✅ сделано</div>' : '<div class="badge-child">⏳ ещё не сделано</div>'}
+    </div>`).join('')}
+  `).join('');
+}
+
+function renderHwGroup(items) {
+  return `
+    <button class="btn btn-seen" style="background:#8e8e93;margin-bottom:10px;" onclick="closeHwPanel()">✕ Свернуть</button>
+    ` + items.map(h => `
+    <div class="card ${h.child_done ? 'seen' : ''}">
+      <div class="meta">${h.page ? 'стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
+      <div class="meta">${h.due_date ? 'Сдать: ' + h.due_date : ''}</div>
+      ${h.source_image_url ? `<a href="${h.source_image_url}" target="_blank"><img src="${h.source_image_url}" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
+      <div class="row">
+        <button class="btn btn-seen ${h.child_done ? '' : 'off'}" onclick="toggleDone(${h.id}, ${h.child_done ? 1 : 0})">${h.child_done ? '✓ Сделал(а)' : 'Отметить сделанным'}</button>
+      </div>
+    </div>`).join('');
+}
+
+function closeHwPanel() {
+  openHwKey = null;
+  document.getElementById('homework').classList.remove('open');
+  document.getElementById('homework-title').style.display = 'none';
+}
+
+function toggleHwKey(key, displaySubject, displayDay) {
+  const hEl = document.getElementById('homework');
+  const titleEl = document.getElementById('homework-title');
+  if (openHwKey === key) {
+    closeHwPanel();
+    return;
+  }
+  openHwKey = key;
+  titleEl.textContent = `Домашнее задание: ${displaySubject || ''} (${displayDay || ''})`;
+  titleEl.style.display = 'block';
+  hEl.innerHTML = renderHwGroup(hwByKey[key] || []);
+  hEl.classList.add('open');
+  hEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+function scrollToToday() {
+  const todayName = dateToDayName(new Date().toISOString().slice(0, 10));
+  const col = document.querySelector(`.cal-col[data-day="${todayName}"]`);
+  if (col) {
+    col.scrollIntoView({behavior: 'auto', inline: 'center', block: 'nearest'});
+  }
+}
+
+async function toggleDone(id, current) {
+  await fetch(`{{ api_base }}/api/homework/${id}/mark?role=child`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({role: 'child', value: !done})
+    body: JSON.stringify({role: 'child', value: !current})
   });
   load();
+}
+
+function groupBySubject(items) {
+  const groups = {};
+  items.forEach(h => {
+    const key = h.subject || 'Без предмета';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(h);
+  });
+  return groups;
 }
 
 function renderCalendar(schedule, hwDaySubjects) {
@@ -1298,19 +1614,22 @@ function renderCalendar(schedule, hwDaySubjects) {
     const slots = [];
     for (let n = 1; n <= maxNum; n++) slots.push(byNum[n] || null);
     return `
-    <div class="cal-col">
+    <div class="cal-col" data-day="${day}">
       <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
       ${slots.map((s, idx) => {
         const lessonNum = idx + 1;
         if (!s) {
-          return `<div class="cal-lesson" style="opacity:.35;">
+          return `<div class="cal-lesson" data-lesson-num="${lessonNum}" style="opacity:.35;">
           <span class="num">${lessonNum}.</span><span class="subj">—</span>
+          ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
         </div>`;
         }
-        const hasHw = hwDaySubjects && hwDaySubjects.has(day + '|' + s.subject);
+        const key = day + '|' + normalizeSubject(s.subject);
+        const hasHw = hwDaySubjects && hwDaySubjects.has(key);
         return `
-        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}">
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
           <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
+          ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
       }).join('')}
@@ -1322,23 +1641,58 @@ async function load() {
   const res = await fetch('{{ api_base }}/api/data?role=child');
   const data = await res.json();
 
-  const hEl = document.getElementById('homework');
-  hEl.innerHTML = data.homework.length ? data.homework.map(h => `
-    <div class="card ${h.child_done ? 'done' : ''}">
-      <div class="subject">${h.subject || ''}</div>
-      <div class="task">${h.task || ''} ${h.page ? '(стр. ' + h.page + (h.exercise ? ', №' + h.exercise : '') + ')' : ''}</div>
-      ${h.due_date ? `<div class="due">Сдать: ${h.due_date}</div>` : ''}
-      ${h.source_image_url ? `<a href="${h.source_image_url}" target="_blank"><img src="${h.source_image_url}" style="max-width:100%;border-radius:12px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
-      <button onclick="toggleDone(${h.id}, ${h.child_done ? 1 : 0})">${h.child_done ? '↩️ Не сделано' : '✅ Сделал(а)'}</button>
-    </div>`).join('') : '<div class="empty">Пока ничего нет 🎉</div>';
+  document.getElementById('msg-counter').textContent =
+    `Сообщений из «{{ class_name }}»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
 
-  document.getElementById('schedule').innerHTML = renderCalendar(
-    data.schedule,
-    new Set(data.homework.filter(h => !h.child_done && h.subject).map(h => dateToDayName(h.assigned_date) + '|' + h.subject))
+  const todayName = DAY_ORDER[(new Date().getDay() + 6) % 7];
+  const todayRows = data.schedule.filter(s => s.day_of_week === todayName);
+  const todayNums = todayRows.map((s, i) => (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1));
+  todayLessonCount = todayNums.length ? Math.max(...todayNums) : null;
+  todayLessonNums = todayNums.length ? new Set(todayNums) : null;
+
+  const weekAgo = new Date();
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  const hwDaySubjects = new Set(
+    data.homework.filter(h => !h.child_done && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
+      .map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject))
   );
+  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
+  if (!window.__scrolledToday) {
+    window.__scrolledToday = true;
+    setTimeout(scrollToToday, 50);
+  }
+
+  allHomework = data.homework;
+  if (archiveOpen) renderArchive();
+
+  allRefDocs = data.reference_docs || [];
+  if (refDocsOpen) renderRefDocs();
+
+  hwByKey = {};
+  data.homework.forEach(h => {
+    if (!h.subject) return;
+    const day = dateToDayName(h.assigned_date);
+    const key = day + '|' + normalizeSubject(h.subject);
+    if (!hwByKey[key]) hwByKey[key] = [];
+    hwByKey[key].push(h);
+  });
+  if (openHwKey && hwByKey[openHwKey]) {
+    document.getElementById('homework').innerHTML = renderHwGroup(hwByKey[openHwKey]);
+  } else if (openHwKey) {
+    openHwKey = null;
+    document.getElementById('homework').classList.remove('open');
+    document.getElementById('homework-title').style.display = 'none';
+  }
+
+  const tEl = document.getElementById('teacher');
+  teacherMsgs = data.teacher_messages;
+  tEl.innerHTML = teacherMsgs.length ? teacherMsgs.map(renderTeacherCard).join('') : '<div class="empty">Пока нет сообщений от классного руководителя</div>';
+  updateLiveTimer();
 }
 load();
 setInterval(load, 30000);
+updateLiveTimer();
+setInterval(updateLiveTimer, 1000);
 </script>
 </body>
 </html>"""
