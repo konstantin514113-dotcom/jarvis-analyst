@@ -108,6 +108,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
 - Если сообщение начинается с явной отметки даты вида "ДАТА: 15.05.2026" или похожей — это реальная дата пересланного сообщения, верни её в message_date в формате YYYY-MM-DD и не включай саму отметку в анализ содержания.
 - Если дата не указана явно текстом, оставь date как null, не угадывай.
 - Если это скриншот переписки — вычленяй только полезную информацию, игнорируй смайлики и болтовню на фото.
+- Частый паттерн: подпись к фото — это ТОЛЬКО название предмета (например "Русский", "Математика"), а само задание написано на фотографии (страница учебника, тетрадь, распечатка). В этом случае используй подпись как subject, а содержание задания (номер упражнения, страницу, суть задания) прочитай с фотографии и запиши в homework. Не помечай такое сообщение как is_chatter только из-за короткой подписи — смотри на содержимое фото.
 """
 
 
@@ -272,8 +273,12 @@ def webhook_max():
         mime = file_data.get("mimeType", "")
         caption = file_data.get("caption", "") or ""
         text = caption
+        download_url = file_data.get("downloadUrl")
+        if not mime.startswith("image/"):
+            guessed = _guess_mime_from_name(file_data.get("fileName")) or _guess_mime_from_name(download_url)
+            if guessed:
+                mime = guessed
         if mime.startswith("image/"):
-            download_url = file_data.get("downloadUrl")
             if download_url:
                 try:
                     image_b64 = download_green_api_file(download_url)
@@ -291,6 +296,19 @@ def webhook_max():
     print(f"[webhook] Обработано: chatId={chat_id!r} idMessage={max_message_id!r} result={result!r} text_preview={text[:80]!r}")
 
     return jsonify({"ok": True, "result": result}), 200
+
+
+def _guess_mime_from_name(name):
+    if not name:
+        return None
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return {
+        "webp": "image/webp",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+    }.get(ext)
 
 
 # ---------- Backfill (история чата с начала) ----------
@@ -333,7 +351,12 @@ def _backfill_chat_history(chat_id, max_messages=1000):
                 caption = file_info.get("caption", "") or ""
                 text = caption
                 download_url = file_info.get("downloadUrl") or msg.get("downloadUrl")
-                mime = file_info.get("mimeType", "image/jpeg")
+                mime = (
+                    file_info.get("mimeType")
+                    or _guess_mime_from_name(msg.get("fileName"))
+                    or _guess_mime_from_name(download_url)
+                    or "image/jpeg"
+                )
                 if download_url:
                     try:
                         image_b64 = download_green_api_file(download_url)
