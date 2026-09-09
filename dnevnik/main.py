@@ -746,6 +746,18 @@ function dateToDayName(dateStr) {
   return DAY_ORDER[idx];
 }
 
+function dateNumForDay(dayName) {
+  const idx = DAY_ORDER.indexOf(dayName);
+  if (idx === -1) return '';
+  const now = new Date();
+  const curIdx = (now.getDay() + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - curIdx);
+  const target = new Date(monday);
+  target.setDate(monday.getDate() + idx);
+  return target.getDate();
+}
+
 let teacherMsgs = [];
 let expandedTeacherIds = new Set();
 
@@ -873,7 +885,7 @@ function renderCalendar(schedule, hwDaySubjects) {
   if (!days.length) return '<div class="empty">Пока нет данных</div>';
   return days.map(day => `
     <div class="cal-col" data-day="${day}">
-      <div class="cal-day">${day}</div>
+      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
       ${byDay[day].map((s, i) => {
         const key = day + '|' + s.subject;
         const hasHw = hwDaySubjects && hwDaySubjects.has(key);
@@ -978,6 +990,18 @@ function dateToDayName(dateStr) {
   return DAY_ORDER[idx];
 }
 
+function dateNumForDay(dayName) {
+  const idx = DAY_ORDER.indexOf(dayName);
+  if (idx === -1) return '';
+  const now = new Date();
+  const curIdx = (now.getDay() + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - curIdx);
+  const target = new Date(monday);
+  target.setDate(monday.getDate() + idx);
+  return target.getDate();
+}
+
 async function toggleDone(id, done) {
   await fetch(`/api/homework/${id}/mark`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1000,7 +1024,7 @@ function renderCalendar(schedule, hwDaySubjects) {
   if (!days.length) return '<div class="empty">Пока нет данных</div>';
   return days.map(day => `
     <div class="cal-col">
-      <div class="cal-day">${day}</div>
+      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
       ${byDay[day].map((s, i) => {
         const hasHw = hwDaySubjects && hwDaySubjects.has(day + '|' + s.subject);
         return `
