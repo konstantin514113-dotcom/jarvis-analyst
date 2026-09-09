@@ -501,16 +501,26 @@ PARENT_HTML = """<!doctype html>
   .btn-seen.off { background:#e5e5ea; color:#1c1c1e; }
   .btn-link { background:#f0f0f5; color:#0071e3; text-decoration:none; display:inline-block; }
   .badge-child { font-size:12px; color:#ff9500; margin-top:4px; }
+  .cal-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:8px; }
+  .cal { display:grid; grid-auto-flow:column; gap:8px; min-width:600px; }
+  .cal-col { background:#fff; border-radius:12px; padding:10px; min-width:130px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .cal-day { font-weight:700; font-size:13px; color:#0071e3; text-transform:uppercase; text-align:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #eee; }
+  .cal-lesson { background:#f5f5f7; border-radius:8px; padding:6px 8px; margin-bottom:6px; font-size:13px; }
+  .cal-lesson .num { color:#8e8e93; font-size:11px; margin-right:4px; }
+  .cal-lesson .subj { font-weight:600; }
+  .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
 </style>
 </head>
 <body>
 <h1>📋 Дневник — вид родителя</h1>
 <div class="section-title">Расписание</div>
-<div id="schedule"></div>
+<div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 <div class="section-title">Домашнее задание (по предметам)</div>
 <div id="homework"></div>
 
 <script>
+const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
+
 async function markSeen(id, current) {
   await fetch(`/api/homework/${id}/mark`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -529,17 +539,34 @@ function groupBySubject(items) {
   return groups;
 }
 
+function renderCalendar(schedule) {
+  const byDay = {};
+  schedule.forEach(s => {
+    const day = s.day_of_week || 'Без дня';
+    if (!byDay[day]) byDay[day] = [];
+    byDay[day].push(s);
+  });
+  const days = Object.keys(byDay).sort((a, b) => {
+    const ia = DAY_ORDER.indexOf(a), ib = DAY_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  if (!days.length) return '<div class="empty">Пока нет данных</div>';
+  return days.map(day => `
+    <div class="cal-col">
+      <div class="cal-day">${day}</div>
+      ${byDay[day].map((s, i) => `
+        <div class="cal-lesson">
+          <span class="num">${i + 1}.</span><span class="subj">${s.time ? s.time + ' ' : ''}${s.subject || ''}</span>
+          ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
+        </div>`).join('')}
+    </div>`).join('');
+}
+
 async function load() {
   const res = await fetch('/api/data');
   const data = await res.json();
 
-  const sEl = document.getElementById('schedule');
-  sEl.innerHTML = data.schedule.length ? data.schedule.map(s => `
-    <div class="card">
-      <div class="day">${s.day_of_week || ''} ${s.date || ''}</div>
-      <div class="subject">${s.time ? s.time + ' — ' : ''}${s.subject || ''}</div>
-      ${s.room ? `<div class="meta">${s.room}</div>` : ''}
-    </div>`).join('') : '<div class="empty">Пока нет данных</div>';
+  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule);
 
   const hEl = document.getElementById('homework');
   const groups = groupBySubject(data.homework);
@@ -581,21 +608,54 @@ CHILD_HTML = """<!doctype html>
   .due { font-size:14px; color:#8e8e93; margin-top:4px; }
   button { margin-top:10px; border:none; border-radius:10px; padding:8px 14px; font-size:15px; background:#34c759; color:#fff; }
   .empty { color:#8e8e93; font-size:15px; }
+  .cal-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:8px; }
+  .cal { display:grid; grid-auto-flow:column; gap:8px; min-width:600px; }
+  .cal-col { background:#fff; border:2px solid #ffe0a3; border-radius:14px; padding:10px; min-width:130px; }
+  .cal-day { font-weight:700; font-size:13px; color:#ff9500; text-transform:uppercase; text-align:center; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #ffe0a3; }
+  .cal-lesson { background:#fff9f0; border-radius:8px; padding:6px 8px; margin-bottom:6px; font-size:13px; }
+  .cal-lesson .num { color:#c99a4a; font-size:11px; margin-right:4px; }
+  .cal-lesson .subj { font-weight:600; }
+  .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
 </style>
 </head>
 <body>
 <h1>🎒 Моё домашнее задание</h1>
 <div id="homework"></div>
 <h1 style="margin-top:28px;">📅 Расписание</h1>
-<div id="schedule"></div>
+<div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 
 <script>
+const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
+
 async function toggleDone(id, done) {
   await fetch(`/api/homework/${id}/mark`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({role: 'child', value: !done})
   });
   load();
+}
+
+function renderCalendar(schedule) {
+  const byDay = {};
+  schedule.forEach(s => {
+    const day = s.day_of_week || 'Без дня';
+    if (!byDay[day]) byDay[day] = [];
+    byDay[day].push(s);
+  });
+  const days = Object.keys(byDay).sort((a, b) => {
+    const ia = DAY_ORDER.indexOf(a), ib = DAY_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  if (!days.length) return '<div class="empty">Пока нет данных</div>';
+  return days.map(day => `
+    <div class="cal-col">
+      <div class="cal-day">${day}</div>
+      ${byDay[day].map((s, i) => `
+        <div class="cal-lesson">
+          <span class="num">${i + 1}.</span><span class="subj">${s.subject || ''}</span>
+          ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
+        </div>`).join('')}
+    </div>`).join('');
 }
 
 async function load() {
@@ -611,13 +671,7 @@ async function load() {
       <button onclick="toggleDone(${h.id}, ${h.child_done ? 1 : 0})">${h.child_done ? '↩️ Не сделано' : '✅ Сделал(а)'}</button>
     </div>`).join('') : '<div class="empty">Пока ничего нет 🎉</div>';
 
-  const sEl = document.getElementById('schedule');
-  sEl.innerHTML = data.schedule.length ? data.schedule.map(s => `
-    <div class="card">
-      <div class="subject">${s.day_of_week || ''} ${s.time ? '· ' + s.time : ''}</div>
-      <div class="task">${s.subject || ''}</div>
-      ${s.room ? `<div class="due">${s.room}</div>` : ''}
-    </div>`).join('') : '<div class="empty">Пока нет данных</div>';
+  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule);
 }
 load();
 setInterval(load, 30000);
