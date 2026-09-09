@@ -1326,6 +1326,9 @@ def _auto_configure():
     _fix_bad_assigned_dates()
 
     conn = get_db()
+    conn.execute("UPDATE homework SET assigned_date = '2026-09-09' WHERE assigned_date = '2025-09-09'")
+    conn.execute("UPDATE messages SET received_at = '2026-09-09' || substr(received_at, 5) WHERE received_at LIKE '2025-09-09%'")
+    conn.commit()
     for r in conn.execute("SELECT id, subject, assigned_date, child_done FROM homework ORDER BY id"):
         print(f"[debug-hw] id={r['id']} subject={r['subject']!r} assigned_date={r['assigned_date']!r} child_done={r['child_done']!r}")
     conn.close()
