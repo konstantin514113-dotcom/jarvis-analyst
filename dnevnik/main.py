@@ -41,6 +41,7 @@ def init_db():
             chat_id TEXT,
             sender_name TEXT,
             raw_text TEXT,
+            quoted_text TEXT,
             has_image INTEGER DEFAULT 0,
             received_at TEXT,
             parsed_json TEXT
@@ -187,7 +188,7 @@ def _message_already_processed(max_message_id):
     return row is not None
 
 
-def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None):
+def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None, quoted_text=None):
     if _message_already_processed(max_message_id):
         return "duplicate"
 
@@ -201,8 +202,8 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
 
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO messages (max_message_id, chat_id, sender_name, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (max_message_id, chat_id, sender_name, text, has_image, received_at, json.dumps(parsed, ensure_ascii=False)),
+        "INSERT INTO messages (max_message_id, chat_id, sender_name, raw_text, quoted_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (max_message_id, chat_id, sender_name, text, quoted_text, has_image, received_at, json.dumps(parsed, ensure_ascii=False)),
     )
     message_row_id = cur.lastrowid
 
@@ -265,6 +266,14 @@ def webhook_max():
     image_b64 = None
     image_media_type = None
 
+    quoted = message_data.get("quotedMessage") or {}
+    quoted_text = (
+        quoted.get("textMessage")
+        or quoted.get("caption")
+        or (quoted.get("extendedTextMessageData") or {}).get("text")
+        or None
+    )
+
     if "textMessageData" in message_data:
         text = message_data["textMessageData"].get("textMessage", "")
     elif "extendedTextMessageData" in message_data:
@@ -293,7 +302,7 @@ def webhook_max():
     max_message_id = payload.get("idMessage", "")
     received_at = datetime.datetime.utcnow().isoformat()
 
-    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id)
+    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text)
     print(f"[webhook] Обработано: chatId={chat_id!r} idMessage={max_message_id!r} result={result!r} text_preview={text[:80]!r}")
 
     return jsonify({"ok": True, "result": result}), 200
@@ -370,13 +379,15 @@ def _backfill_chat_history(chat_id, max_messages=1000):
 
             max_message_id = msg.get("idMessage", "")
             sender_name = msg.get("senderContactName") or msg.get("senderName") or ""
+            quoted = msg.get("quotedMessage") or {}
+            quoted_text = quoted.get("textMessage") or quoted.get("caption") or None
             ts = msg.get("timestamp")
             received_at = (
                 datetime.datetime.utcfromtimestamp(ts).isoformat()
                 if ts else datetime.datetime.utcnow().isoformat()
             )
 
-            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id)
+            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text)
             if result == "ok":
                 processed += 1
         except Exception as e:
@@ -502,10 +513,9 @@ def api_data():
         "SELECT * FROM homework ORDER BY due_date IS NULL, due_date, id DESC"
     ).fetchall()
     teacher_rows = conn.execute(
-        "SELECT id, sender_name, raw_text, has_image, received_at, parsed_json FROM messages "
+        "SELECT id, sender_name, raw_text, quoted_text, has_image, received_at, parsed_json FROM messages "
         "WHERE sender_name LIKE ? "
-        "AND (json_extract(parsed_json, '$.is_chatter') IS NOT 1) "
-        "ORDER BY received_at DESC LIMIT 50",
+        "ORDER BY received_at DESC LIMIT 100",
         (f"%{TEACHER_NAME}%",),
     ).fetchall()
     main_chat_count_row = conn.execute(
@@ -599,7 +609,7 @@ PARENT_HTML = """<!doctype html>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 <div class="section-title" id="homework-title" style="display:none;"></div>
 <div id="homework"></div>
-<div class="section-title">📢 Объявления от классного руководителя (без болтовни)</div>
+<div class="section-title">📢 Сообщения классного руководителя</div>
 <div id="teacher"></div>
 
 <script>
@@ -748,8 +758,9 @@ async function load() {
         ${m.has_schedule ? ' · 📅 расписание' : ''}
         ${m.has_homework ? ' · 📚 домашка' : ''}
       </div>
-      <div class="subject" style="font-size:15px;font-weight:400;">${m.announcement_summary || m.raw_text || '(без текста)'}</div>
-    </div>`).join('') : '<div class="empty">Пока нет объявлений от классного руководителя</div>';
+      ${m.quoted_text ? `<div class="meta" style="font-style:italic;border-left:2px solid #d0d0d5;padding-left:8px;margin-top:4px;">В ответ на: «${m.quoted_text}»</div>` : ''}
+      <div class="subject" style="font-size:15px;font-weight:400;">${m.raw_text || m.announcement_summary || '(без текста)'}</div>
+    </div>`).join('') : '<div class="empty">Пока нет сообщений от классного руководителя</div>';
 }
 load();
 setInterval(load, 30000);
