@@ -70,6 +70,7 @@ def init_db():
             assigned_date TEXT,
             due_date TEXT,
             gdz_link TEXT,
+            solution TEXT,
             parent_seen INTEGER DEFAULT 0,
             child_done INTEGER DEFAULT 0,
             source_message_id INTEGER
@@ -100,7 +101,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
     {"day_of_week": "Понедельник", "date": "YYYY-MM-DD или null", "time": "8:30 или null", "subject": "Математика", "room": "каб. 12 или null"}
   ],
   "homework": [
-    {"subject": "Математика", "task": "краткое описание задания", "page": "34 или null", "exercise": "5 или null", "due_date": "YYYY-MM-DD или null"}
+    {"subject": "Математика", "task": "краткое описание задания", "page": "34 или null", "exercise": "5 или null", "due_date": "YYYY-MM-DD или null", "solution": "готовое полное решение/ответ на это задание — реши его сам"}
   ]
 }
 
@@ -111,6 +112,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
 - Если дата не указана явно текстом, оставь date как null, не угадывай.
 - Если это скриншот переписки — вычленяй только полезную информацию, игнорируй смайлики и болтовню на фото.
 - Частый паттерн: подпись к фото — это ТОЛЬКО название предмета (например "Русский", "Математика"), а само задание написано на фотографии (страница учебника, тетрадь, распечатка). В этом случае используй подпись как subject, а содержание задания (номер упражнения, страницу, суть задания) прочитай с фотографии и запиши в homework. Не помечай такое сообщение как is_chatter только из-за короткой подписи — смотри на содержимое фото.
+- Для КАЖДОГО пункта homework обязательно реши задание сам и дай в поле solution развёрнутый готовый ответ (по любому предмету — русский язык, математика, история и т.д.): правильные ответы/исправленные варианты/вычисления с результатом, в удобном для проверки родителем виде. Если задание творческое и не имеет единственного правильного ответа (например "нарисовать рисунок") — в solution кратко опиши, что должно получиться в итоге.
 """
 
 
@@ -147,7 +149,7 @@ def parse_message_with_llm(text, image_b64=None, image_media_type=None):
         },
         json={
             "model": "claude-sonnet-4-6",
-            "max_tokens": 1500,
+            "max_tokens": 3000,
             "system": PARSE_SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": content_blocks}],
         },
@@ -227,8 +229,8 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
         gdz_link = build_gdz_link(item.get("subject"), item.get("page"), item.get("exercise"))
         print(f"[homework] subject={item.get('subject')!r} task={item.get('task')!r} page={item.get('page')!r} exercise={item.get('exercise')!r}")
         conn.execute(
-            "INSERT INTO homework (subject, task, page, exercise, assigned_date, due_date, gdz_link, source_message_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO homework (subject, task, page, exercise, assigned_date, due_date, gdz_link, solution, source_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item.get("subject"),
                 item.get("task"),
@@ -237,6 +239,7 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
                 received_at[:10],
                 item.get("due_date"),
                 gdz_link,
+                item.get("solution"),
                 message_row_id,
             ),
         )
@@ -445,8 +448,8 @@ def import_bulk():
     for item in homework_items:
         gdz_link = build_gdz_link(item.get("subject"), item.get("page"), item.get("exercise"))
         conn.execute(
-            "INSERT INTO homework (subject, task, page, exercise, assigned_date, due_date, gdz_link, source_message_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO homework (subject, task, page, exercise, assigned_date, due_date, gdz_link, solution, source_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item.get("subject"),
                 item.get("task"),
@@ -455,6 +458,7 @@ def import_bulk():
                 item.get("assigned_date") or datetime.datetime.utcnow().date().isoformat(),
                 item.get("due_date"),
                 gdz_link,
+                item.get("solution"),
                 message_row_id,
             ),
         )
@@ -601,6 +605,7 @@ PARENT_HTML = """<!doctype html>
   .cal-lesson .num { color:#8e8e93; font-size:11px; margin-right:4px; }
   .cal-lesson .subj { font-weight:600; }
   .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
+  .cal-lesson .lesson-time { color:#0071e3; font-size:11px; margin-top:1px; font-weight:600; }
   .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff3b30; margin-left:5px; vertical-align:middle; }
   .cal-lesson.has-hw { background:#fff0ef; cursor:pointer; }
   .cal-lesson.active-lesson { border:2px solid #0071e3; }
@@ -637,6 +642,18 @@ const BELLS_WEEKDAY = [
 const BELLS_SATURDAY = [
   [510, 545], [555, 590], [610, 645], [655, 690], [700, 735], [745, 780]
 ]; // 08:30-09:05 ... 12:25-13:00
+
+function fmtHM(totalMin) {
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  return `${h}:${m < 10 ? '0' : ''}${m}`;
+}
+
+function bellRangeFor(dayName, lessonNum) {
+  const bells = dayName === 'Суббота' ? BELLS_SATURDAY : BELLS_WEEKDAY;
+  const b = bells[lessonNum - 1];
+  if (!b) return null;
+  return `${fmtHM(b[0])}–${fmtHM(b[1])}`;
+}
 
 function getLiveStatus() {
   const now = new Date();
@@ -694,7 +711,7 @@ function updateLiveTimer() {
   if (st.type === 'lesson') {
     const col = document.querySelector(`.cal-col[data-day="${st.dayName}"]`);
     const lessonEl = col ? col.querySelector(`.cal-lesson[data-lesson-num="${st.index}"]`) : null;
-    const subj = lessonEl ? lessonEl.querySelector('.subj').textContent.replace(/^\d+:\d+\s*/, '') : '';
+    const subj = lessonEl ? lessonEl.querySelector('.subj').textContent : '';
     el.style.display = 'block';
     el.innerHTML = `<div>📖 Идёт урок ${st.index}${subj ? ' — ' + subj : ''} · осталось ${Math.ceil(st.remainingMin)} мин</div>
       <div class="live-bar-track"><div class="live-bar-fill" style="width:${st.progress}%"></div></div>`;
@@ -740,6 +757,7 @@ function renderHwGroup(items) {
       <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
       <div class="meta">${h.due_date ? 'Сдать: ' + h.due_date : ''}</div>
       ${h.source_image_url ? `<a href="${h.source_image_url}" target="_blank"><img src="${h.source_image_url}" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
+      ${h.solution ? `<div style="background:#eaf5ea;border-radius:8px;padding:10px 12px;margin-top:8px;font-size:14px;white-space:pre-wrap;"><b style="color:#34a853;">✅ Готовый ответ:</b><br>${h.solution}</div>` : ''}
       ${h.child_done ? '<div class="badge-child">✅ ребёнок отметил как сделано</div>' : '<div class="badge-child">⏳ ребёнок ещё не отметил</div>'}
       <div class="row">
         <button class="btn btn-seen ${h.parent_seen ? '' : 'off'}" onclick="markSeen(${h.id}, ${h.parent_seen ? 1 : 0})">${h.parent_seen ? '✓ Просмотрено' : 'Отметить просмотренным'}</button>
@@ -816,7 +834,8 @@ function renderCalendar(schedule, hwDaySubjects) {
         const hasHw = hwDaySubjects && hwDaySubjects.has(key);
         return `
         <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${i + 1}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}')"` : ''}>
-          <span class="num">${i + 1}.</span><span class="subj">${s.time ? s.time + ' ' : ''}${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
+          <span class="num">${i + 1}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
+          ${bellRangeFor(day, i + 1) ? `<div class="lesson-time">${bellRangeFor(day, i + 1)}</div>` : (s.time ? `<div class="lesson-time">${s.time}</div>` : '')}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
       }).join('')}
