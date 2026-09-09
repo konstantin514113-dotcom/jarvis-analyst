@@ -797,6 +797,39 @@ PARENT_HTML = """<!doctype html>
   .hw-hint { color:#8a8570; }
 </style>
 {% endif %}
+{% if theme == 'football' %}
+<style>
+  body { background:#0b1f4d; color:#eef1f8; }
+  h1 { color:#fff; }
+  .card { background:#fff; border:none; border-left:4px solid #c9a227; color:#0b1f4d; }
+  .card.seen { border-left:4px solid #2e7d32; }
+  .card .subject { color:#0b1f4d; }
+  .card .meta { color:#5a6a8a; }
+  .day, .section-title { color:#fff; }
+  .cal-day { color:#c9a227; }
+  .empty { color:#c3cbe0; }
+  .btn-seen { background:#c9a227; color:#0b1f4d; }
+  .btn-seen.off { background:rgba(255,255,255,.15); color:#fff; }
+  .btn-link { background:rgba(255,255,255,.12); color:#fff; }
+  .badge-child { color:#c9a227; }
+  .cal-col { background:rgba(255,255,255,.08); border:none; }
+  .cal-lesson { background:rgba(255,255,255,.06); }
+  .cal-lesson .num { color:#c3cbe0; }
+  .cal-lesson .subj { color:#fff; }
+  .cal-lesson .room { color:#c3cbe0; }
+  .cal-lesson .lesson-time { color:#c9a227; }
+  .hw-dot { background:#c9a227; }
+  .cal-lesson.has-hw { background:rgba(201,162,39,.18); }
+  .cal-lesson.active-lesson { border:2px solid #c9a227; }
+  .lesson-progress-track { background:rgba(255,255,255,.2); }
+  .lesson-progress-fill { background:#c9a227; }
+  #live-status { background:rgba(255,255,255,.1); border:1px solid #c9a227; color:#fff; }
+  #live-status .live-bar-track { background:rgba(255,255,255,.25); }
+  #live-status .live-bar-fill { background:#c9a227; }
+  .hw-hint { color:#c3cbe0; }
+  #msg-counter { color:#c3cbe0 !important; }
+</style>
+{% endif %}
 </head>
 <body>
 <h1>📋 Дневник {{ student_name }} — {{ class_name }}</h1>
@@ -1319,6 +1352,39 @@ CHILD_HTML = """<!doctype html>
   .hw-hint { color:#8a8570; }
 </style>
 {% endif %}
+{% if theme == 'football' %}
+<style>
+  body { background:#0b1f4d; color:#eef1f8; }
+  h1 { color:#fff; }
+  .card { background:#fff; border:none; border-left:4px solid #c9a227; color:#0b1f4d; }
+  .card.seen { border-left:4px solid #2e7d32; }
+  .card .subject { color:#0b1f4d; }
+  .card .meta { color:#5a6a8a; }
+  .day, .section-title { color:#fff; }
+  .cal-day { color:#c9a227; }
+  .empty { color:#c3cbe0; }
+  .btn-seen { background:#c9a227; color:#0b1f4d; }
+  .btn-seen.off { background:rgba(255,255,255,.15); color:#fff; }
+  .btn-link { background:rgba(255,255,255,.12); color:#fff; }
+  .badge-child { color:#c9a227; }
+  .cal-col { background:rgba(255,255,255,.08); border:none; }
+  .cal-lesson { background:rgba(255,255,255,.06); }
+  .cal-lesson .num { color:#c3cbe0; }
+  .cal-lesson .subj { color:#fff; }
+  .cal-lesson .room { color:#c3cbe0; }
+  .cal-lesson .lesson-time { color:#c9a227; }
+  .hw-dot { background:#c9a227; }
+  .cal-lesson.has-hw { background:rgba(201,162,39,.18); }
+  .cal-lesson.active-lesson { border:2px solid #c9a227; }
+  .lesson-progress-track { background:rgba(255,255,255,.2); }
+  .lesson-progress-fill { background:#c9a227; }
+  #live-status { background:rgba(255,255,255,.1); border:1px solid #c9a227; color:#fff; }
+  #live-status .live-bar-track { background:rgba(255,255,255,.25); }
+  #live-status .live-bar-fill { background:#c9a227; }
+  .hw-hint { color:#c3cbe0; }
+  #msg-counter { color:#c3cbe0 !important; }
+</style>
+{% endif %}
 </head>
 <body>
 <h1>📋 Дневник {{ student_name }} — {{ class_name }}</h1>
@@ -1764,12 +1830,12 @@ setInterval(updateLiveTimer, 1000);
 
 @app.route("/parent")
 def parent_view():
-    return render_template_string(PARENT_HTML, api_base="", student_name="Александра", class_name="5 «в»")
+    return render_template_string(PARENT_HTML, api_base="", student_name="Александра", class_name="5 «в»", theme="football")
 
 
 @app.route("/child")
 def child_view():
-    return render_template_string(CHILD_HTML, api_base="", student_name="Александра", class_name="5 «в»")
+    return render_template_string(CHILD_HTML, api_base="", student_name="Александра", class_name="5 «в»", theme="football")
 
 
 @app.route("/evgeniy/parent")
