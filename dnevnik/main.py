@@ -104,7 +104,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
   "has_announcement": true/false,
   "announcement_summary": "краткое содержание объявления одним предложением, или null",
   "is_chatter": true/false,
-  "message_date": "YYYY-MM-DD или null — РЕАЛЬНАЯ дата этого сообщения/переписки, ЕСЛИ она явно указана в тексте (например строка вида 'ДАТА: 15.05.2026' или '15 мая' в начале сообщения). Если такой явной отметки даты нет — null.",
+  "message_date": "YYYY-MM-DD или null — РЕАЛЬНАЯ дата этого сообщения/переписки, ЕСЛИ она явно указана ОТДЕЛЬНОЙ служебной строкой вида 'ДАТА: 15.05.2026' в начале сообщения (это специальная отметка для пересланных сообщений). НЕ извлекай дату из обычных упоминаний внутри текста задания вроде 'ДЗ от 9.09' или 'домашка на 15.05' — это НЕ команда на переопределение даты, оставляй message_date = null в таких случаях, дата будет взята из времени получения сообщения автоматически.",
   "schedule": [
     {"day_of_week": "Понедельник", "date": "YYYY-MM-DD или null", "time": "8:30 или null", "subject": "Математика", "room": "каб. 12 или null"}
   ],
@@ -116,7 +116,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
 Правила:
 - is_chatter = true, если сообщение НЕ содержит ни расписания, ни домашки, ни важного объявления — это обычное общение, эмодзи, реакции, благодарности, организационные мелочи без конкретики.
 - has_announcement = true только для содержательных объявлений от учителя (не от родителей): собрания, сборы, мероприятия, важные изменения. Обычные "спасибо"/"хорошо" — это НЕ объявление.
-- Если сообщение начинается с явной отметки даты вида "ДАТА: 15.05.2026" или похожей — это реальная дата пересланного сообщения, верни её в message_date в формате YYYY-MM-DD и не включай саму отметку в анализ содержания.
+- Если сообщение начинается с явной отметки даты вида "ДАТА: 15.05.2026" (именно такой отдельной строкой, с двоеточием, в начале сообщения) — это реальная дата пересланного сообщения, верни её в message_date в формате YYYY-MM-DD и не включай саму отметку в анализ содержания. Любые другие упоминания дат внутри обычного текста (например "домашка от 9.09", "ДЗ на 15 мая") — это часть содержания задания, а НЕ команда на переопределение даты; в этих случаях message_date = null.
 - Если дата не указана явно текстом, оставь date как null, не угадывай.
 - Если это скриншот переписки — вычленяй только полезную информацию, игнорируй смайлики и болтовню на фото.
 - Частый паттерн: подпись к фото — это ТОЛЬКО название предмета (например "Русский", "Математика"), а само задание написано на фотографии (страница учебника, тетрадь, распечатка). В этом случае используй подпись как subject, а содержание задания (номер упражнения, страницу, суть задания) прочитай с фотографии и запиши в homework. Не помечай такое сообщение как is_chatter только из-за короткой подписи — смотри на содержимое фото.
@@ -173,6 +173,7 @@ def parse_message_with_llm(text, image_b64=None, image_media_type=None, day_name
         return {"has_schedule": False, "has_homework": False, "schedule": [], "homework": []}
 
     hints = []
+    hints.append(f"Сегодняшняя дата: {datetime.datetime.utcnow().date().isoformat()} — используй её как ориентир, если понадобится сопоставлять относительные даты, но НЕ используй её саму как message_date.")
     known_subjects = _get_known_subjects_for_day(day_name)
     if known_subjects:
         hints.append(f"Предметы по расписанию в этот день ({day_name}): {', '.join(known_subjects)}. "
@@ -1292,16 +1293,37 @@ def _seed_manual_schedule():
     print(f"[startup] Внесено расписание вручную: {len(schedule_rows)} записей")
 
 
+def _fix_bad_assigned_dates():
+    """Разовая миграция: чинит assigned_date у заданий, где модель ошибочно домыслила
+    дату из текста (например 'ДЗ от 9.09' без года) вместо реальной даты получения сообщения.
+    Не трогает реально пересланные сообщения с явной меткой 'ДАТА:'."""
+    sentinel_id = "migration-fix-assigned-dates-1"
+    if _message_already_processed(sentinel_id):
+        return
+    conn = get_db()
+    conn.execute("""
+        UPDATE homework
+        SET assigned_date = substr((SELECT received_at FROM messages WHERE messages.id = homework.source_message_id), 1, 10)
+        WHERE source_message_id IN (
+            SELECT id FROM messages WHERE raw_text NOT LIKE 'ДАТА:%'
+        )
+        AND EXISTS (SELECT 1 FROM messages WHERE messages.id = homework.source_message_id)
+    """)
+    conn.execute(
+        "INSERT INTO messages (max_message_id, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?)",
+        (sentinel_id, "Миграция дат домашки", 1, datetime.datetime.utcnow().isoformat(), "{}"),
+    )
+    conn.commit()
+    conn.close()
+    print("[startup] Даты домашки исправлены на реальное время получения сообщения")
+
+
 def _auto_configure():
     global GREEN_API_CHAT_ID, ALLOWED_CHAT_IDS
 
     _seed_manual_schedule()
     _normalize_homework_subjects()
-
-    conn = get_db()
-    for r in conn.execute("SELECT id, subject, assigned_date, task FROM homework ORDER BY id"):
-        print(f"[debug-hw] id={r['id']} subject={r['subject']!r} assigned_date={r['assigned_date']!r} task={(r['task'] or '')[:40]!r}")
-    conn.close()
+    _fix_bad_assigned_dates()
 
     # 1. Найти chatId по имени, если id ещё не задан явно
     if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
