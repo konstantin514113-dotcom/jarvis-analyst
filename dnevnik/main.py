@@ -640,6 +640,7 @@ def api_data_evgeniy():
 
 
 def _api_data_impl(db_path, teacher_name, main_chat_id):
+    is_child = request.args.get("role") == "child"
     conn = get_db(db_path)
     schedule_rows = conn.execute(
         "SELECT * FROM schedule ORDER BY date IS NULL, date, time"
@@ -678,9 +679,15 @@ def _api_data_impl(db_path, teacher_name, main_chat_id):
         row["has_homework"] = bool(parsed.get("has_homework"))
         teacher_messages.append(row)
 
+    homework_list = [dict(r) for r in homework_rows]
+    if is_child:
+        for h in homework_list:
+            h.pop("solution", None)
+            h.pop("gdz_link", None)
+
     return jsonify({
         "schedule": [dict(r) for r in schedule_rows],
-        "homework": [dict(r) for r in homework_rows],
+        "homework": homework_list,
         "teacher_messages": teacher_messages,
         "reference_docs": [dict(r) for r in reference_doc_rows],
         "main_chat_message_count": main_chat_count_row["c"],
@@ -1312,7 +1319,7 @@ function renderCalendar(schedule, hwDaySubjects) {
 }
 
 async function load() {
-  const res = await fetch('{{ api_base }}/api/data');
+  const res = await fetch('{{ api_base }}/api/data?role=child');
   const data = await res.json();
 
   const hEl = document.getElementById('homework');
