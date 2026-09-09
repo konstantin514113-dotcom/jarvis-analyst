@@ -1298,6 +1298,11 @@ def _auto_configure():
     _seed_manual_schedule()
     _normalize_homework_subjects()
 
+    conn = get_db()
+    for r in conn.execute("SELECT id, subject, assigned_date, task FROM homework ORDER BY id"):
+        print(f"[debug-hw] id={r['id']} subject={r['subject']!r} assigned_date={r['assigned_date']!r} task={(r['task'] or '')[:40]!r}")
+    conn.close()
+
     # 1. Найти chatId по имени, если id ещё не задан явно
     if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
         resolved_id, resolved_name = _resolve_chat_id_by_name(GREEN_API_CHAT_NAME)
