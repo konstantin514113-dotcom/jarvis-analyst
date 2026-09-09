@@ -1525,6 +1525,13 @@ def _auto_configure():
     _normalize_homework_subjects()
     _fix_bad_assigned_dates()
 
+    conn = get_db(EVGENIY_DB_PATH)
+    for r in conn.execute("SELECT id, subject, task, assigned_date FROM homework ORDER BY id"):
+        print(f"[debug-evg-hw] id={r['id']} subject={r['subject']!r} task={(r['task'] or '')[:50]!r} assigned_date={r['assigned_date']!r}")
+    for r in conn.execute("SELECT id, sender_name, raw_text, parsed_json FROM messages WHERE raw_text LIKE '%геометр%' OR raw_text LIKE '%ПРМЗ%'"):
+        print(f"[debug-evg-msg] id={r['id']} sender={r['sender_name']!r} text={(r['raw_text'] or '')[:60]!r} parsed={r['parsed_json']}")
+    conn.close()
+
     # 1. Найти chatId по имени, если id ещё не задан явно
     if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
         resolved_id, resolved_name = _resolve_chat_id_by_name(GREEN_API_CHAT_NAME)
