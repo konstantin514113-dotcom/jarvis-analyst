@@ -76,6 +76,13 @@ def init_db():
             source_message_id INTEGER
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS teacher_subjects (
+            sender_name TEXT PRIMARY KEY,
+            subject TEXT,
+            updated_at TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -113,6 +120,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
 - Если это скриншот переписки — вычленяй только полезную информацию, игнорируй смайлики и болтовню на фото.
 - Частый паттерн: подпись к фото — это ТОЛЬКО название предмета (например "Русский", "Математика"), а само задание написано на фотографии (страница учебника, тетрадь, распечатка). В этом случае используй подпись как subject, а содержание задания (номер упражнения, страницу, суть задания) прочитай с фотографии и запиши в homework. Не помечай такое сообщение как is_chatter только из-за короткой подписи — смотри на содержимое фото.
 - КРИТИЧЕСКИ ВАЖНО: subject должен быть КОРОТКИМ каноническим названием предмета ровно как оно называется в школьном расписании — "Русский язык", "Математика", "История", "Английский язык", "Иностранный язык", "Литература", "Труд", "ИЗО", "Физкультура", "Наглядная геометрия" и т.п. НЕ добавляй в subject фамилию учителя, группу, кабинет, уточнения в скобках — это ломает связку с расписанием. Все такие детали (какая группа, какой учитель, какой кабинет) переноси в поле task вместе с текстом задания.
+- Если предмет явно не назван в тексте — определи его сам по содержанию задания и подсказкам ниже: формулы/уравнения/вычисления → скорее всего "Математика"; орфография/грамматика/словосочетания на русском → "Русский язык"; текст на английском/задание из англ. учебника → "Английский язык" или "Иностранный язык"; отрывок из художественного произведения/анализ текста → "Литература"; даты/события/исторические личности → "История". Если в подсказках ниже дан список предметов по расписанию на этот день и/или известный предмет этого отправителя — в первую очередь ориентируйся на них при выборе subject.
 - Для КАЖДОГО пункта homework обязательно реши задание сам и дай в поле solution развёрнутый готовый ответ (по любому предмету — русский язык, математика, история и т.д.): правильные ответы/исправленные варианты/вычисления с результатом, в удобном для проверки родителем виде. Если задание творческое и не имеет единственного правильного ответа (например "нарисовать рисунок") — в solution кратко опиши, что должно получиться в итоге.
 """
 
@@ -129,9 +137,54 @@ def _extract_json(content):
         return {"has_schedule": False, "has_homework": False, "schedule": [], "homework": []}
 
 
-def parse_message_with_llm(text, image_b64=None, image_media_type=None):
+def _get_known_subjects_for_day(day_name):
+    if not day_name:
+        return []
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT DISTINCT subject FROM schedule WHERE day_of_week = ? AND subject IS NOT NULL", (day_name,)
+    ).fetchall()
+    conn.close()
+    return [r["subject"] for r in rows]
+
+
+def _get_known_subject_for_sender(sender_name):
+    if not sender_name:
+        return None
+    conn = get_db()
+    row = conn.execute("SELECT subject FROM teacher_subjects WHERE sender_name = ?", (sender_name,)).fetchone()
+    conn.close()
+    return row["subject"] if row else None
+
+
+def _remember_teacher_subject(sender_name, subject):
+    if not sender_name or not subject:
+        return
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO teacher_subjects (sender_name, subject, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(sender_name) DO UPDATE SET subject = excluded.subject, updated_at = excluded.updated_at",
+        (sender_name, subject, datetime.datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def parse_message_with_llm(text, image_b64=None, image_media_type=None, day_name=None, sender_name=None):
     if not ANTHROPIC_API_KEY:
         return {"has_schedule": False, "has_homework": False, "schedule": [], "homework": []}
+
+    hints = []
+    known_subjects = _get_known_subjects_for_day(day_name)
+    if known_subjects:
+        hints.append(f"Предметы по расписанию в этот день ({day_name}): {', '.join(known_subjects)}. "
+                      f"Если задание явно по одному из этих предметов (по контексту, теме, отправителю), "
+                      f"используй subject РОВНО в том виде, как он написан в этом списке.")
+    known_teacher_subject = _get_known_subject_for_sender(sender_name)
+    if known_teacher_subject:
+        hints.append(f"Известно, что отправитель этого сообщения ({sender_name}) ранее писал(а) задания по предмету "
+                      f"«{known_teacher_subject}» — если это похоже на тот же случай, используй тот же subject.")
+    hint_text = ("\n\n" + "\n".join(hints)) if hints else ""
 
     content_blocks = []
     if image_b64:
@@ -139,7 +192,7 @@ def parse_message_with_llm(text, image_b64=None, image_media_type=None):
             "type": "image",
             "source": {"type": "base64", "media_type": image_media_type or "image/jpeg", "data": image_b64},
         })
-    content_blocks.append({"type": "text", "text": text or "(без подписи, смотри изображение)"})
+    content_blocks.append({"type": "text", "text": (text or "(без подписи, смотри изображение)") + hint_text})
 
     resp = requests.post(
         "https://api.anthropic.com/v1/messages",
@@ -192,12 +245,24 @@ def _message_already_processed(max_message_id):
     return row is not None
 
 
+_PY_DAY_NAMES = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+
+
+def _weekday_name_from_iso(dt_str):
+    try:
+        d = datetime.datetime.fromisoformat(dt_str[:10])
+        return _PY_DAY_NAMES[d.weekday()]
+    except Exception:
+        return None
+
+
 def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None, quoted_text=None, image_url=None):
     if _message_already_processed(max_message_id):
         return "duplicate"
 
     has_image = 1 if image_b64 else 0
-    parsed = parse_message_with_llm(text, image_b64, image_media_type)
+    day_name = _weekday_name_from_iso(received_at)
+    parsed = parse_message_with_llm(text, image_b64, image_media_type, day_name=day_name, sender_name=sender_name)
 
     message_date = parsed.get("message_date")
     if message_date:
@@ -229,6 +294,7 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
     for item in parsed.get("homework", []):
         gdz_link = build_gdz_link(item.get("subject"), item.get("page"), item.get("exercise"))
         print(f"[homework] subject={item.get('subject')!r} task={item.get('task')!r} page={item.get('page')!r} exercise={item.get('exercise')!r}")
+        _remember_teacher_subject(sender_name, item.get("subject"))
         conn.execute(
             "INSERT INTO homework (subject, task, page, exercise, assigned_date, due_date, gdz_link, solution, source_message_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
