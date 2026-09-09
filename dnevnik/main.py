@@ -925,7 +925,7 @@ function normalizeSubject(s) {
   if (!s) return '';
   const t = s.toLowerCase();
   if (t.includes('англ') || t.includes('ин.яз') || t.includes('иностран') || t.includes('инф')) return 'язык/инф';
-  if (t.includes('геометр')) return 'геометрия';
+  if (t.includes('геомет')) return 'геометрия';
   if (t.includes('математ') || t.includes('прмз') || t.includes('алгебр')) return 'математика';
   return t.replace(/[^а-яё]/g, '');
 }
