@@ -93,6 +93,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
   "has_announcement": true/false,
   "announcement_summary": "краткое содержание объявления одним предложением, или null",
   "is_chatter": true/false,
+  "message_date": "YYYY-MM-DD или null — РЕАЛЬНАЯ дата этого сообщения/переписки, ЕСЛИ она явно указана в тексте (например строка вида 'ДАТА: 15.05.2026' или '15 мая' в начале сообщения). Если такой явной отметки даты нет — null.",
   "schedule": [
     {"day_of_week": "Понедельник", "date": "YYYY-MM-DD или null", "time": "8:30 или null", "subject": "Математика", "room": "каб. 12 или null"}
   ],
@@ -104,6 +105,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
 Правила:
 - is_chatter = true, если сообщение НЕ содержит ни расписания, ни домашки, ни важного объявления — это обычное общение, эмодзи, реакции, благодарности, организационные мелочи без конкретики.
 - has_announcement = true только для содержательных объявлений от учителя (не от родителей): собрания, сборы, мероприятия, важные изменения. Обычные "спасибо"/"хорошо" — это НЕ объявление.
+- Если сообщение начинается с явной отметки даты вида "ДАТА: 15.05.2026" или похожей — это реальная дата пересланного сообщения, верни её в message_date в формате YYYY-MM-DD и не включай саму отметку в анализ содержания.
 - Если дата не указана явно текстом, оставь date как null, не угадывай.
 - Если это скриншот переписки — вычленяй только полезную информацию, игнорируй смайлики и болтовню на фото.
 """
@@ -191,6 +193,11 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
     has_image = 1 if image_b64 else 0
     parsed = parse_message_with_llm(text, image_b64, image_media_type)
 
+    message_date = parsed.get("message_date")
+    if message_date:
+        # Пересланное сообщение с явной отметкой реальной даты — используем её вместо времени пересылки
+        received_at = message_date + received_at[10:]
+
     conn = get_db()
     cur = conn.execute(
         "INSERT INTO messages (max_message_id, chat_id, sender_name, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -205,7 +212,7 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
             (
                 None,
                 item.get("day_of_week"),
-                item.get("date"),
+                item.get("date") or message_date,
                 item.get("time"),
                 item.get("subject"),
                 item.get("room"),
