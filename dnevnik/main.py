@@ -17,24 +17,45 @@ GREEN_API_API_TOKEN = os.environ.get("GREEN_API_API_TOKEN", "")
 GREEN_API_CHAT_ID = os.environ.get("GREEN_API_CHAT_ID", "")  # id канала родители+учитель
 GREEN_API_CHAT_NAME = os.environ.get("GREEN_API_CHAT_NAME", "")  # если id неизвестен — ищем чат по имени
 GREEN_API_EXTRA_CHAT_NAMES = os.environ.get("GREEN_API_EXTRA_CHAT_NAMES", "")  # доп. источники через запятую (например личный архивный канал)
-ALLOWED_CHAT_IDS = set()  # заполняется при старте: основной чат + дополнительные
+ALLOWED_CHAT_IDS = set()  # заполняется при старте: основной чат + дополнительные + все чаты учеников
 TEACHER_NAME = os.environ.get("TEACHER_NAME", "Анастасия Харькина")  # классный руководитель — для выделения её сообщений
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# Второй ученик (Евгений, 7А класс) — тот же MAX-аккаунт/green-api instance, другой чат и своя база
+EVGENIY_CHAT_NAME = os.environ.get("EVGENIY_CHAT_NAME", "7А класс")
+EVGENIY_DB_PATH = os.environ.get("EVGENIY_DB_PATH", "dnevnik_evgeniy.db")
+EVGENIY_TEACHER_NAME = os.environ.get("EVGENIY_TEACHER_NAME", "Жэкина Классная")
+EVGENIY_CHAT_ID = os.environ.get("EVGENIY_CHAT_ID", "")
+CHAT_ID_TO_TENANT = {}  # chat_id -> "evgeniy" (заполняется при старте); отсутствие в словаре = основной ученик
 
 GREEN_API_BASE = f"https://api.green-api.com/waInstance{GREEN_API_ID_INSTANCE}"
 
 
+def db_path_for_chat(chat_id):
+    if CHAT_ID_TO_TENANT.get(chat_id) == "evgeniy":
+        return EVGENIY_DB_PATH
+    return DB_PATH
+
+
+def teacher_name_for_db(db_path):
+    return EVGENIY_TEACHER_NAME if db_path == EVGENIY_DB_PATH else TEACHER_NAME
+
+
+def main_chat_id_for_db(db_path):
+    return EVGENIY_CHAT_ID if db_path == EVGENIY_DB_PATH else GREEN_API_CHAT_ID
+
+
 # ---------- DB ----------
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=15)
+def get_db(db_path=None):
+    conn = sqlite3.connect(db_path or DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
-def init_db():
-    conn = get_db()
+def init_db(db_path=None):
+    conn = get_db(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +121,7 @@ def init_db():
 
 
 init_db()
+init_db(EVGENIY_DB_PATH)
 
 
 # ---------- LLM parsing (text + image) ----------
@@ -154,10 +176,10 @@ def _extract_json(content):
         return {"has_schedule": False, "has_homework": False, "schedule": [], "homework": []}
 
 
-def _get_known_subjects_for_day(day_name):
+def _get_known_subjects_for_day(day_name, db_path=None):
     if not day_name:
         return []
-    conn = get_db()
+    conn = get_db(db_path)
     rows = conn.execute(
         "SELECT DISTINCT subject FROM schedule WHERE day_of_week = ? AND subject IS NOT NULL", (day_name,)
     ).fetchall()
@@ -165,10 +187,10 @@ def _get_known_subjects_for_day(day_name):
     return [r["subject"] for r in rows]
 
 
-def _get_known_subject_for_sender(sender_name):
+def _get_known_subject_for_sender(sender_name, db_path=None):
     if not sender_name:
         return None
-    conn = get_db()
+    conn = get_db(db_path)
     row = conn.execute("SELECT subject FROM teacher_subjects WHERE sender_name = ?", (sender_name,)).fetchone()
     conn.close()
     return row["subject"] if row else None
@@ -184,19 +206,19 @@ def _remember_teacher_subject(conn, sender_name, subject):
     )
 
 
-def parse_message_with_llm(text, image_b64=None, image_media_type=None, day_name=None, sender_name=None):
+def parse_message_with_llm(text, image_b64=None, image_media_type=None, day_name=None, sender_name=None, db_path=None):
     if not ANTHROPIC_API_KEY:
         return {"has_schedule": False, "has_homework": False, "schedule": [], "homework": []}
 
     hints = []
     hints.append(f"Сегодняшняя дата: {datetime.datetime.utcnow().date().isoformat()} — используй её как ориентир, если понадобится сопоставлять относительные даты, но НЕ используй её саму как message_date.")
-    known_subjects = _get_known_subjects_for_day(day_name)
+    known_subjects = _get_known_subjects_for_day(day_name, db_path)
     if known_subjects:
         hints.append(f"Предметы по расписанию в этот день ({day_name}): {', '.join(known_subjects)}. "
                       f"Учителя, как правило, присылают домашнее задание в тот же день, когда был урок — "
                       f"поэтому если задание похоже по теме/содержанию на один из этих предметов, "
                       f"используй subject РОВНО в том виде, как он написан в этом списке, даже если предмет явно не назван в тексте.")
-    known_teacher_subject = _get_known_subject_for_sender(sender_name)
+    known_teacher_subject = _get_known_subject_for_sender(sender_name, db_path)
     if known_teacher_subject:
         hints.append(f"Известно, что отправитель этого сообщения ({sender_name}) ранее писал(а) задания по предмету "
                       f"«{known_teacher_subject}» — если это похоже на тот же случай, используй тот же subject.")
@@ -252,10 +274,10 @@ def download_green_api_file(url):
 
 # ---------- Webhook ----------
 
-def _message_already_processed(max_message_id):
+def _message_already_processed(max_message_id, db_path=None):
     if not max_message_id:
         return False
-    conn = get_db()
+    conn = get_db(db_path)
     row = conn.execute("SELECT 1 FROM messages WHERE max_message_id = ?", (max_message_id,)).fetchone()
     conn.close()
     return row is not None
@@ -272,20 +294,20 @@ def _weekday_name_from_iso(dt_str):
         return None
 
 
-def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None, quoted_text=None, image_url=None):
-    if _message_already_processed(max_message_id):
+def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None, quoted_text=None, image_url=None, db_path=None):
+    if _message_already_processed(max_message_id, db_path):
         return "duplicate"
 
     has_image = 1 if image_b64 else 0
     day_name = _weekday_name_from_iso(received_at)
-    parsed = parse_message_with_llm(text, image_b64, image_media_type, day_name=day_name, sender_name=sender_name)
+    parsed = parse_message_with_llm(text, image_b64, image_media_type, day_name=day_name, sender_name=sender_name, db_path=db_path)
 
     message_date = parsed.get("message_date")
     if message_date:
         # Пересланное сообщение с явной отметкой реальной даты — используем её вместо времени пересылки
         received_at = message_date + received_at[10:]
 
-    conn = get_db()
+    conn = get_db(db_path)
     cur = conn.execute(
         "INSERT INTO messages (max_message_id, chat_id, sender_name, raw_text, quoted_text, has_image, image_url, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (max_message_id, chat_id, sender_name, text, quoted_text, has_image, image_url, received_at, json.dumps(parsed, ensure_ascii=False)),
@@ -400,8 +422,9 @@ def webhook_max():
     max_message_id = payload.get("idMessage", "")
     received_at = datetime.datetime.utcnow().isoformat()
 
-    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text, image_url)
-    print(f"[webhook] Обработано: chatId={chat_id!r} idMessage={max_message_id!r} result={result!r} text_len={len(text)} text_preview={text[:80]!r}")
+    db_path = db_path_for_chat(chat_id)
+    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text, image_url, db_path=db_path)
+    print(f"[webhook] Обработано: chatId={chat_id!r} db={db_path!r} idMessage={max_message_id!r} result={result!r} text_len={len(text)} text_preview={text[:80]!r}")
 
     return jsonify({"ok": True, "result": result}), 200
 
@@ -421,7 +444,7 @@ def _guess_mime_from_name(name):
 
 # ---------- Backfill (история чата с начала) ----------
 
-def _backfill_chat_history(chat_id, max_messages=1000):
+def _backfill_chat_history(chat_id, db_path=None, max_messages=1000):
     """Тянет историю чата через getChatHistory и прогоняет через тот же парсер, что и вебхук."""
     print(f"[backfill] Запрашиваю историю для chatId={chat_id!r} (type={type(chat_id).__name__})")
     try:
@@ -487,7 +510,7 @@ def _backfill_chat_history(chat_id, max_messages=1000):
                 if ts else datetime.datetime.utcnow().isoformat()
             )
 
-            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text, image_url)
+            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text, image_url, db_path=db_path)
             print(f"[backfill] idMessage={max_message_id!r} result={result!r} text_len={len(text)}")
             if result == "ok":
                 processed += 1
@@ -607,7 +630,16 @@ def get_chats():
 
 @app.route("/api/data")
 def api_data():
-    conn = get_db()
+    return _api_data_impl(DB_PATH, TEACHER_NAME, GREEN_API_CHAT_ID)
+
+
+@app.route("/evgeniy/api/data")
+def api_data_evgeniy():
+    return _api_data_impl(EVGENIY_DB_PATH, EVGENIY_TEACHER_NAME, EVGENIY_CHAT_ID)
+
+
+def _api_data_impl(db_path, teacher_name, main_chat_id):
+    conn = get_db(db_path)
     schedule_rows = conn.execute(
         "SELECT * FROM schedule ORDER BY date IS NULL, date, time"
     ).fetchall()
@@ -620,11 +652,11 @@ def api_data():
         "SELECT id, sender_name, raw_text, quoted_text, has_image, image_url, received_at, parsed_json FROM messages "
         "WHERE sender_name LIKE ? "
         "ORDER BY received_at DESC LIMIT 100",
-        (f"%{TEACHER_NAME}%",),
+        (f"%{teacher_name}%",),
     ).fetchall()
     main_chat_count_row = conn.execute(
         "SELECT COUNT(*) AS c FROM messages WHERE chat_id = ?",
-        (GREEN_API_CHAT_ID,),
+        (main_chat_id,),
     ).fetchone()
     total_count_row = conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()
     reference_doc_rows = conn.execute(
@@ -657,13 +689,22 @@ def api_data():
 
 @app.route("/api/homework/<int:hw_id>/mark", methods=["POST"])
 def mark_homework(hw_id):
+    return _mark_homework_impl(hw_id, DB_PATH)
+
+
+@app.route("/evgeniy/api/homework/<int:hw_id>/mark", methods=["POST"])
+def mark_homework_evgeniy(hw_id):
+    return _mark_homework_impl(hw_id, EVGENIY_DB_PATH)
+
+
+def _mark_homework_impl(hw_id, db_path):
     body = request.json or {}
     role = body.get("role")  # "parent" or "child"
     value = 1 if body.get("value", True) else 0
     if role not in ("parent", "child"):
         return jsonify({"error": "role must be 'parent' or 'child'"}), 400
     field = "parent_seen" if role == "parent" else "child_done"
-    conn = get_db()
+    conn = get_db(db_path)
     conn.execute(f"UPDATE homework SET {field} = ? WHERE id = ?", (value, hw_id))
     conn.commit()
     conn.close()
@@ -1026,7 +1067,7 @@ function scrollToToday() {
 }
 
 async function markSeen(id, current) {
-  await fetch(`/api/homework/${id}/mark`, {
+  await fetch(`{{ api_base }}/api/homework/${id}/mark`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({role: 'parent', value: !current})
   });
@@ -1072,7 +1113,7 @@ function renderCalendar(schedule, hwDaySubjects) {
 }
 
 async function load() {
-  const res = await fetch('/api/data');
+  const res = await fetch('{{ api_base }}/api/data');
   const data = await res.json();
 
   document.getElementById('msg-counter').textContent =
@@ -1186,7 +1227,7 @@ function dateNumForDay(dayName) {
 }
 
 async function toggleDone(id, done) {
-  await fetch(`/api/homework/${id}/mark`, {
+  await fetch(`{{ api_base }}/api/homework/${id}/mark`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({role: 'child', value: !done})
   });
@@ -1220,7 +1261,7 @@ function renderCalendar(schedule, hwDaySubjects) {
 }
 
 async function load() {
-  const res = await fetch('/api/data');
+  const res = await fetch('{{ api_base }}/api/data');
   const data = await res.json();
 
   const hEl = document.getElementById('homework');
@@ -1247,17 +1288,27 @@ setInterval(load, 30000);
 
 @app.route("/parent")
 def parent_view():
-    return render_template_string(PARENT_HTML)
+    return render_template_string(PARENT_HTML, api_base="")
 
 
 @app.route("/child")
 def child_view():
-    return render_template_string(CHILD_HTML)
+    return render_template_string(CHILD_HTML, api_base="")
+
+
+@app.route("/evgeniy/parent")
+def parent_view_evgeniy():
+    return render_template_string(PARENT_HTML, api_base="/evgeniy")
+
+
+@app.route("/evgeniy/child")
+def child_view_evgeniy():
+    return render_template_string(CHILD_HTML, api_base="/evgeniy")
 
 
 @app.route("/")
 def index():
-    return "Дневник backend работает. Смотри /parent и /child"
+    return "Дневник backend работает. Смотри /parent, /child, /evgeniy/parent, /evgeniy/child"
 
 
 # ---------- Автонастройка при запуске (работает и под gunicorn) ----------
@@ -1385,7 +1436,7 @@ def _fix_bad_assigned_dates():
 
 
 def _auto_configure():
-    global GREEN_API_CHAT_ID, ALLOWED_CHAT_IDS
+    global GREEN_API_CHAT_ID, ALLOWED_CHAT_IDS, EVGENIY_CHAT_ID
 
     _seed_manual_schedule()
     _normalize_homework_subjects()
@@ -1413,6 +1464,20 @@ def _auto_configure():
         else:
             print(f"[startup] Доп. источник по имени '{name}' не найден среди чатов аккаунта")
 
+    # 1c. Чат второго ученика (Евгений, 7А класс) — тот же аккаунт, свой чат и своя база
+    if not EVGENIY_CHAT_ID and EVGENIY_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
+        resolved_id, resolved_name = _resolve_chat_id_by_name(EVGENIY_CHAT_NAME)
+        if resolved_id:
+            EVGENIY_CHAT_ID = resolved_id
+            ALLOWED_CHAT_IDS.add(resolved_id)
+            CHAT_ID_TO_TENANT[resolved_id] = "evgeniy"
+            print(f"[startup] Найден чат Евгения '{resolved_name}' → chatId={resolved_id}")
+        else:
+            print(f"[startup] Чат Евгения по имени '{EVGENIY_CHAT_NAME}' не найден среди чатов аккаунта")
+    elif EVGENIY_CHAT_ID:
+        ALLOWED_CHAT_IDS.add(EVGENIY_CHAT_ID)
+        CHAT_ID_TO_TENANT[EVGENIY_CHAT_ID] = "evgeniy"
+
     # 2. Зарегистрировать вебхук на свой публичный домен (Railway задаёт его автоматически)
     public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
     if public_domain and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
@@ -1427,15 +1492,15 @@ def _auto_configure():
         except Exception as e:
             print(f"[startup] Не удалось зарегистрировать вебхук: {e}")
 
-    # 3. Подтягиваем историю из всех источников (main + extras) в фоне. _process_and_store
-    #    дедуплицирует по max_message_id, так что повторные запуски дёшевы.
+    # 3. Подтягиваем историю из всех источников (main + extras + Евгений) в фоне, каждый в свою базу.
+    #    _process_and_store дедуплицирует по max_message_id, так что повторные запуски дёшевы.
     if ALLOWED_CHAT_IDS:
         print(f"[startup] Запускаю загрузку истории для {len(ALLOWED_CHAT_IDS)} чат(ов) (в фоне)...")
         for cid in ALLOWED_CHAT_IDS:
             threading.Thread(
                 target=_backfill_chat_history,
                 args=(cid,),
-                kwargs={"max_messages": 1000},
+                kwargs={"max_messages": 1000, "db_path": db_path_for_chat(cid)},
                 daemon=True,
             ).start()
 
