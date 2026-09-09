@@ -804,6 +804,7 @@ function bellRangeFor(dayName, lessonNum) {
 }
 
 let todayLessonCount = null;
+let todayLessonNums = null;
 
 function getLiveStatus() {
   const now = new Date();
@@ -816,25 +817,36 @@ function getLiveStatus() {
   const bells = dow === 6 ? BELLS_SATURDAY : BELLS_WEEKDAY;
   const maxLessons = todayLessonCount != null ? todayLessonCount : bells.length;
 
-  if (nowMin < bells[0][0]) {
-    return { type: 'before', dayName, remainingMin: bells[0][0] - nowMin, nextIndex: 1 };
-  }
+  // Список реально существующих сегодня уроков (пропускаем "дыры" в расписании)
+  const periods = [];
   for (let i = 0; i < bells.length && i < maxLessons; i++) {
-    const [start, end] = bells[i];
-    if (nowMin >= start && nowMin < end) {
+    if (!todayLessonNums || todayLessonNums.has(i + 1)) {
+      periods.push({ num: i + 1, start: bells[i][0], end: bells[i][1] });
+    }
+  }
+  if (!periods.length) {
+    return { type: 'after', dayName, label: 'Сегодня уроков нет' };
+  }
+
+  if (nowMin < periods[0].start) {
+    return { type: 'before', dayName, remainingMin: periods[0].start - nowMin, nextIndex: periods[0].num };
+  }
+  for (let i = 0; i < periods.length; i++) {
+    const p = periods[i];
+    if (nowMin >= p.start && nowMin < p.end) {
       return {
-        type: 'lesson', dayName, index: i + 1,
-        remainingMin: end - nowMin,
-        progress: ((nowMin - start) / (end - start)) * 100,
+        type: 'lesson', dayName, index: p.num,
+        remainingMin: p.end - nowMin,
+        progress: ((nowMin - p.start) / (p.end - p.start)) * 100,
       };
     }
-    if (i < maxLessons - 1) {
-      const nextStart = bells[i + 1][0];
-      if (nowMin >= end && nowMin < nextStart) {
+    if (i < periods.length - 1) {
+      const next = periods[i + 1];
+      if (nowMin >= p.end && nowMin < next.start) {
         return {
-          type: 'break', dayName, afterIndex: i + 1, nextIndex: i + 2,
-          remainingMin: nextStart - nowMin,
-          progress: ((nowMin - end) / (nextStart - end)) * 100,
+          type: 'break', dayName, afterIndex: p.num, nextIndex: next.num,
+          remainingMin: next.start - nowMin,
+          progress: ((nowMin - p.end) / (next.start - p.end)) * 100,
         };
       }
     }
@@ -1102,10 +1114,11 @@ function renderCalendar(schedule, hwDaySubjects) {
       ${byDay[day].map((s, i) => {
         const key = day + '|' + normalizeSubject(s.subject);
         const hasHw = hwDaySubjects && hwDaySubjects.has(key);
+        const lessonNum = (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1);
         return `
-        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${i + 1}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
-          <span class="num">${i + 1}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
-          ${bellRangeFor(day, i + 1) ? `<div class="lesson-time">${bellRangeFor(day, i + 1)}</div>` : (s.time ? `<div class="lesson-time">${s.time}</div>` : '')}
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
+          <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
+          ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
       }).join('')}
@@ -1120,7 +1133,10 @@ async function load() {
     `Сообщений из «5в класс»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
 
   const todayName = DAY_ORDER[(new Date().getDay() + 6) % 7];
-  todayLessonCount = data.schedule.filter(s => s.day_of_week === todayName).length || null;
+  const todayRows = data.schedule.filter(s => s.day_of_week === todayName);
+  const todayNums = todayRows.map((s, i) => (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1));
+  todayLessonCount = todayNums.length ? Math.max(...todayNums) : null;
+  todayLessonNums = todayNums.length ? new Set(todayNums) : null;
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
@@ -1251,9 +1267,10 @@ function renderCalendar(schedule, hwDaySubjects) {
       <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
       ${byDay[day].map((s, i) => {
         const hasHw = hwDaySubjects && hwDaySubjects.has(day + '|' + s.subject);
+        const lessonNum = (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1);
         return `
         <div class="cal-lesson ${hasHw ? 'has-hw' : ''}">
-          <span class="num">${i + 1}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
+          <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
       }).join('')}
@@ -1410,6 +1427,71 @@ def _seed_manual_schedule():
     print(f"[startup] Внесено расписание вручную: {len(schedule_rows)} записей")
 
 
+def _seed_evgeniy_schedule():
+    """Ручной ввод расписания 7А класса из официального файла школы (Старшая школа_07.09.26)."""
+    sentinel_id = "manual-seed-schedule-evgeniy-1"
+    if _message_already_processed(sentinel_id, EVGENIY_DB_PATH):
+        return
+
+    schedule_rows = [
+        ("Понедельник", 1, "Классный час", "314"),
+        ("Понедельник", 2, "История", "222"),
+        ("Понедельник", 3, "Русский язык", "213"),
+        ("Понедельник", 4, "Ин.яз. / Инф.", "325/329"),
+        ("Понедельник", 5, "Алгебра", "314"),
+        ("Понедельник", 6, "Литература", "213"),
+        ("Понедельник", 7, "Музыка", "337"),
+        ("Вторник", 2, "Ин.яз. / Инф.", "325/329"),
+        ("Вторник", 3, "Физика", "223"),
+        ("Вторник", 4, "Ин.яз. / Инф.", "329/315"),
+        ("Вторник", 5, "ВиС", "314"),
+        ("Вторник", 6, "Физкультура", "сз"),
+        ("Вторник", 7, "География", "222"),
+        ("Среда", 1, "Труд", "120/327"),
+        ("Среда", 2, "Труд", "120/327"),
+        ("Среда", 3, "Физика", "223"),
+        ("Среда", 4, "Нагл.геомет.", "314"),
+        ("Среда", 5, "Русский язык", "213"),
+        ("Среда", 6, "ПРМЗ", "314"),
+        ("Среда", 7, "История", "330"),
+        ("Четверг", 1, "Алгебра", "314"),
+        ("Четверг", 2, "Биология", "117"),
+        ("Четверг", 3, "Ин.яз. / Инф.", "315/329"),
+        ("Четверг", 4, "Инф./ Ин.яз", "329/325"),
+        ("Четверг", 5, "Русский язык", "213"),
+        ("Четверг", 6, "История", "330"),
+        ("Четверг", 7, "Классный час", "314"),
+        ("Пятница", 1, "Русский язык", "213"),
+        ("Пятница", 2, "ПРЯ", "213"),
+        ("Пятница", 3, "ИЗО", "336"),
+        ("Пятница", 4, "Инф./ Ин.яз", "329/315"),
+        ("Пятница", 5, "Геометрия", "314"),
+        ("Пятница", 6, "Литература", "213"),
+        ("Пятница", 7, "География", "225"),
+        ("Суббота", 1, "Физкультура", "сз"),
+        ("Суббота", 2, "Алгебра", "314"),
+        ("Суббота", 3, "Геометрия", "314"),
+    ]
+
+    conn = get_db(EVGENIY_DB_PATH)
+    cur = conn.execute(
+        "INSERT INTO messages (max_message_id, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?)",
+        (sentinel_id, "Ручной ввод расписания 7А (Старшая школа_07.09.26.xlsx)", 1, datetime.datetime.utcnow().isoformat(), "{}"),
+    )
+    message_row_id = cur.lastrowid
+
+    for day, num, subject, room in schedule_rows:
+        conn.execute(
+            "INSERT INTO schedule (week_of, day_of_week, date, time, subject, room, source_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (None, day, None, str(num), subject, room, message_row_id),
+        )
+
+    conn.commit()
+    conn.close()
+    print(f"[startup] Внесено расписание 7А (Евгений) вручную: {len(schedule_rows)} записей")
+
+
 def _fix_bad_assigned_dates():
     """Разовая миграция: чинит assigned_date у заданий, где модель ошибочно домыслила
     дату из текста (например 'ДЗ от 9.09' без года) вместо реальной даты получения сообщения.
@@ -1439,6 +1521,7 @@ def _auto_configure():
     global GREEN_API_CHAT_ID, ALLOWED_CHAT_IDS, EVGENIY_CHAT_ID
 
     _seed_manual_schedule()
+    _seed_evgeniy_schedule()
     _normalize_homework_subjects()
     _fix_bad_assigned_dates()
 
