@@ -1111,13 +1111,28 @@ function renderCalendar(schedule, hwDaySubjects) {
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });
   if (!days.length) return '<div class="empty">Пока нет данных</div>';
-  return days.map(day => `
+  return days.map(day => {
+    const byNum = {};
+    byDay[day].forEach((s, i) => {
+      const num = (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1);
+      byNum[num] = s;
+    });
+    const maxNum = Math.max(...Object.keys(byNum).map(Number));
+    const slots = [];
+    for (let n = 1; n <= maxNum; n++) slots.push(byNum[n] || null);
+    return `
     <div class="cal-col" data-day="${day}">
       <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
-      ${byDay[day].map((s, i) => {
+      ${slots.map((s, idx) => {
+        const lessonNum = idx + 1;
+        if (!s) {
+          return `<div class="cal-lesson" data-lesson-num="${lessonNum}" style="opacity:.35;">
+          <span class="num">${lessonNum}.</span><span class="subj">—</span>
+          ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
+        </div>`;
+        }
         const key = day + '|' + normalizeSubject(s.subject);
         const hasHw = hwDaySubjects && hwDaySubjects.has(key);
-        const lessonNum = (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1);
         return `
         <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
           <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
@@ -1125,7 +1140,8 @@ function renderCalendar(schedule, hwDaySubjects) {
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
       }).join('')}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function load() {
@@ -1265,19 +1281,34 @@ function renderCalendar(schedule, hwDaySubjects) {
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });
   if (!days.length) return '<div class="empty">Пока нет данных</div>';
-  return days.map(day => `
+  return days.map(day => {
+    const byNum = {};
+    byDay[day].forEach((s, i) => {
+      const num = (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1);
+      byNum[num] = s;
+    });
+    const maxNum = Math.max(...Object.keys(byNum).map(Number));
+    const slots = [];
+    for (let n = 1; n <= maxNum; n++) slots.push(byNum[n] || null);
+    return `
     <div class="cal-col">
       <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
-      ${byDay[day].map((s, i) => {
+      ${slots.map((s, idx) => {
+        const lessonNum = idx + 1;
+        if (!s) {
+          return `<div class="cal-lesson" style="opacity:.35;">
+          <span class="num">${lessonNum}.</span><span class="subj">—</span>
+        </div>`;
+        }
         const hasHw = hwDaySubjects && hwDaySubjects.has(day + '|' + s.subject);
-        const lessonNum = (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1);
         return `
         <div class="cal-lesson ${hasHw ? 'has-hw' : ''}">
           <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
       }).join('')}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function load() {
