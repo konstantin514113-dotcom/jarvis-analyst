@@ -765,6 +765,38 @@ PARENT_HTML = """<!doctype html>
   #homework.open { display:block; }
   .hw-hint { font-size:13px; color:#8e8e93; margin:-4px 0 10px; }
 </style>
+{% if theme == 'cs' %}
+<style>
+  body { background:#14140f; color:#d9d4c0; font-family:'Courier New', monospace; }
+  h1 { text-transform:uppercase; letter-spacing:.06em; color:#de9b35; text-shadow:0 0 8px rgba(222,155,53,.35); }
+  .card { background:#1f1f18; border:1px solid #3a3a2c; box-shadow:none; }
+  .card.seen { border-left:4px solid #7cae5a; }
+  .day, .section-title, .cal-day { color:#de9b35; text-transform:uppercase; letter-spacing:.04em; }
+  .subject { color:#eae5d0; }
+  .meta { color:#8a8570; }
+  .empty { color:#8a8570; }
+  .btn { border-radius:2px; text-transform:uppercase; letter-spacing:.03em; font-family:'Courier New', monospace; font-weight:700; }
+  .btn-seen { background:#de9b35; color:#14140f; }
+  .btn-seen.off { background:#3a3a2c; color:#d9d4c0; }
+  .btn-link { background:#2a2a20; color:#de9b35; border:1px solid #de9b35; }
+  .badge-child { color:#de9b35; }
+  .cal-col { background:#1f1f18; border:1px solid #3a3a2c; box-shadow:none; }
+  .cal-lesson { background:#181812; border:1px solid #2a2a20; }
+  .cal-lesson .num { color:#8a8570; }
+  .cal-lesson .subj { color:#eae5d0; }
+  .cal-lesson .room { color:#8a8570; }
+  .cal-lesson .lesson-time { color:#de9b35; }
+  .hw-dot { background:#e0453a; box-shadow:0 0 6px #e0453a; }
+  .cal-lesson.has-hw { background:#241a14; border-color:#e0453a; }
+  .cal-lesson.active-lesson { border:2px solid #de9b35; box-shadow:0 0 10px rgba(222,155,53,.4); }
+  .lesson-progress-track { background:#2a2a20; }
+  .lesson-progress-fill { background:#de9b35; }
+  #live-status { background:#1f1f18; border:1px solid #de9b35; color:#eae5d0; }
+  #live-status .live-bar-track { background:#3a3a2c; }
+  #live-status .live-bar-fill { background:#de9b35; }
+  .hw-hint { color:#8a8570; }
+</style>
+{% endif %}
 </head>
 <body>
 <h1>📋 Дневник {{ student_name }} — {{ class_name }}</h1>
@@ -1255,6 +1287,38 @@ CHILD_HTML = """<!doctype html>
   #homework.open { display:block; }
   .hw-hint { font-size:13px; color:#8e8e93; margin:-4px 0 10px; }
 </style>
+{% if theme == 'cs' %}
+<style>
+  body { background:#14140f; color:#d9d4c0; font-family:'Courier New', monospace; }
+  h1 { text-transform:uppercase; letter-spacing:.06em; color:#de9b35; text-shadow:0 0 8px rgba(222,155,53,.35); }
+  .card { background:#1f1f18; border:1px solid #3a3a2c; box-shadow:none; }
+  .card.seen { border-left:4px solid #7cae5a; }
+  .day, .section-title, .cal-day { color:#de9b35; text-transform:uppercase; letter-spacing:.04em; }
+  .subject { color:#eae5d0; }
+  .meta { color:#8a8570; }
+  .empty { color:#8a8570; }
+  .btn { border-radius:2px; text-transform:uppercase; letter-spacing:.03em; font-family:'Courier New', monospace; font-weight:700; }
+  .btn-seen { background:#de9b35; color:#14140f; }
+  .btn-seen.off { background:#3a3a2c; color:#d9d4c0; }
+  .btn-link { background:#2a2a20; color:#de9b35; border:1px solid #de9b35; }
+  .badge-child { color:#de9b35; }
+  .cal-col { background:#1f1f18; border:1px solid #3a3a2c; box-shadow:none; }
+  .cal-lesson { background:#181812; border:1px solid #2a2a20; }
+  .cal-lesson .num { color:#8a8570; }
+  .cal-lesson .subj { color:#eae5d0; }
+  .cal-lesson .room { color:#8a8570; }
+  .cal-lesson .lesson-time { color:#de9b35; }
+  .hw-dot { background:#e0453a; box-shadow:0 0 6px #e0453a; }
+  .cal-lesson.has-hw { background:#241a14; border-color:#e0453a; }
+  .cal-lesson.active-lesson { border:2px solid #de9b35; box-shadow:0 0 10px rgba(222,155,53,.4); }
+  .lesson-progress-track { background:#2a2a20; }
+  .lesson-progress-fill { background:#de9b35; }
+  #live-status { background:#1f1f18; border:1px solid #de9b35; color:#eae5d0; }
+  #live-status .live-bar-track { background:#3a3a2c; }
+  #live-status .live-bar-fill { background:#de9b35; }
+  .hw-hint { color:#8a8570; }
+</style>
+{% endif %}
 </head>
 <body>
 <h1>📋 Дневник {{ student_name }} — {{ class_name }}</h1>
@@ -1710,12 +1774,12 @@ def child_view():
 
 @app.route("/evgeniy/parent")
 def parent_view_evgeniy():
-    return render_template_string(PARENT_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»")
+    return render_template_string(PARENT_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»", theme="cs")
 
 
 @app.route("/evgeniy/child")
 def child_view_evgeniy():
-    return render_template_string(CHILD_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»")
+    return render_template_string(CHILD_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»", theme="cs")
 
 
 @app.route("/")
