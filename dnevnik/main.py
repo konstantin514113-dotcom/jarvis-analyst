@@ -223,6 +223,7 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
 
     for item in parsed.get("homework", []):
         gdz_link = build_gdz_link(item.get("subject"), item.get("page"), item.get("exercise"))
+        print(f"[homework] subject={item.get('subject')!r} task={item.get('task')!r} page={item.get('page')!r} exercise={item.get('exercise')!r}")
         conn.execute(
             "INSERT INTO homework (subject, task, page, exercise, assigned_date, due_date, gdz_link, source_message_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
