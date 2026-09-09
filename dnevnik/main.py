@@ -764,6 +764,13 @@ function dateNumForDay(dayName) {
   return target.getDate();
 }
 
+function normalizeSubject(s) {
+  if (!s) return '';
+  const t = s.toLowerCase();
+  if (t.includes('англ') || t.includes('ин.яз') || t.includes('иностран') || t.includes('инф')) return 'язык/инф';
+  return t.replace(/[^а-яё]/g, '');
+}
+
 let teacherMsgs = [];
 let expandedTeacherIds = new Set();
 
@@ -870,7 +877,7 @@ function closeHwPanel() {
   document.getElementById('homework-title').style.display = 'none';
 }
 
-function toggleHwKey(key) {
+function toggleHwKey(key, displaySubject, displayDay) {
   const hEl = document.getElementById('homework');
   const titleEl = document.getElementById('homework-title');
   if (openHwKey === key) {
@@ -878,8 +885,7 @@ function toggleHwKey(key) {
     return;
   }
   openHwKey = key;
-  const [day, subject] = key.split('|');
-  titleEl.textContent = `Домашнее задание: ${subject} (${day})`;
+  titleEl.textContent = `Домашнее задание: ${displaySubject || ''} (${displayDay || ''})`;
   titleEl.style.display = 'block';
   hEl.innerHTML = renderHwGroup(hwByKey[key] || []);
   hEl.classList.add('open');
@@ -928,10 +934,10 @@ function renderCalendar(schedule, hwDaySubjects) {
     <div class="cal-col" data-day="${day}">
       <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
       ${byDay[day].map((s, i) => {
-        const key = day + '|' + s.subject;
+        const key = day + '|' + normalizeSubject(s.subject);
         const hasHw = hwDaySubjects && hwDaySubjects.has(key);
         return `
-        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${i + 1}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}')"` : ''}>
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${i + 1}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
           <span class="num">${i + 1}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
           ${bellRangeFor(day, i + 1) ? `<div class="lesson-time">${bellRangeFor(day, i + 1)}</div>` : (s.time ? `<div class="lesson-time">${s.time}</div>` : '')}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
@@ -951,7 +957,7 @@ async function load() {
   weekAgo.setDate(weekAgo.getDate() - 7);
   const hwDaySubjects = new Set(
     data.homework.filter(h => !h.child_done && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
-      .map(h => dateToDayName(h.assigned_date) + '|' + h.subject)
+      .map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject))
   );
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
   if (!window.__scrolledToday) {
@@ -966,7 +972,7 @@ async function load() {
   data.homework.forEach(h => {
     if (!h.subject) return;
     const day = dateToDayName(h.assigned_date);
-    const key = day + '|' + h.subject;
+    const key = day + '|' + normalizeSubject(h.subject);
     if (!hwByKey[key]) hwByKey[key] = [];
     hwByKey[key].push(h);
   });
