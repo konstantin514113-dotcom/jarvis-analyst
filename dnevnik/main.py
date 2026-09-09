@@ -1774,12 +1774,12 @@ def child_view():
 
 @app.route("/evgeniy/parent")
 def parent_view_evgeniy():
-    return render_template_string(PARENT_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»", theme="cs")
+    return render_template_string(PARENT_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»")
 
 
 @app.route("/evgeniy/child")
 def child_view_evgeniy():
-    return render_template_string(CHILD_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»", theme="cs")
+    return render_template_string(CHILD_HTML, api_base="/evgeniy", student_name="Евгения", class_name="7 «А»")
 
 
 @app.route("/")
