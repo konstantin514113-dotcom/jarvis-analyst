@@ -633,6 +633,11 @@ PARENT_HTML = """<!doctype html>
 <div class="section-title">📢 Сообщения классного руководителя</div>
 <div id="teacher"></div>
 
+<div class="section-title" onclick="toggleArchive()" style="cursor:pointer;display:flex;align-items:center;gap:6px;">
+  <span id="archive-arrow">▸</span> Архив домашки
+</div>
+<div id="archive" style="display:none;"></div>
+
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
 
@@ -804,6 +809,41 @@ function toggleTeacherMsg(id) {
 
 let hwByKey = {};
 let openHwKey = null;
+let archiveOpen = false;
+let allHomework = [];
+
+function toggleArchive() {
+  archiveOpen = !archiveOpen;
+  document.getElementById('archive').style.display = archiveOpen ? 'block' : 'none';
+  document.getElementById('archive-arrow').textContent = archiveOpen ? '▾' : '▸';
+  if (archiveOpen) renderArchive();
+}
+
+function renderArchive() {
+  const el = document.getElementById('archive');
+  if (!allHomework.length) {
+    el.innerHTML = '<div class="empty">Пока нет заданий</div>';
+    return;
+  }
+  const byDate = {};
+  allHomework.forEach(h => {
+    const d = h.assigned_date || 'без даты';
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(h);
+  });
+  const dates = Object.keys(byDate).sort().reverse();
+  el.innerHTML = dates.map(d => `
+    <div class="section-title" style="font-size:13px;color:#8e8e93;margin:14px 0 8px;">${d === 'без даты' ? d : new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', {day:'numeric', month:'long', weekday:'long'})}</div>
+    ${byDate[d].map(h => `
+    <div class="card ${h.parent_seen ? 'seen' : ''}">
+      <div class="meta">${h.subject || ''}${h.page ? ' · стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
+      <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
+      ${h.source_image_url ? `<a href="${h.source_image_url}" target="_blank"><img src="${h.source_image_url}" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
+      ${h.solution ? `<div style="background:#eaf5ea;border-radius:8px;padding:10px 12px;margin-top:8px;font-size:14px;white-space:pre-wrap;"><b style="color:#34a853;">✅ Готовый ответ:</b><br>${h.solution}</div>` : ''}
+      ${h.child_done ? '<div class="badge-child">✅ ребёнок отметил как сделано</div>' : '<div class="badge-child">⏳ ребёнок ещё не отметил</div>'}
+    </div>`).join('')}
+  `).join('');
+}
 
 function renderHwGroup(items) {
   return `
@@ -906,8 +946,10 @@ async function load() {
   document.getElementById('msg-counter').textContent =
     `Сообщений из «5в класс»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
 
+  const weekAgo = new Date();
+  weekAgo.setDate(weekAgo.getDate() - 7);
   const hwDaySubjects = new Set(
-    data.homework.filter(h => !h.child_done && h.subject)
+    data.homework.filter(h => !h.child_done && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
       .map(h => dateToDayName(h.assigned_date) + '|' + h.subject)
   );
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
@@ -915,6 +957,9 @@ async function load() {
     window.__scrolledToday = true;
     setTimeout(scrollToToday, 50);
   }
+
+  allHomework = data.homework;
+  if (archiveOpen) renderArchive();
 
   hwByKey = {};
   data.homework.forEach(h => {
