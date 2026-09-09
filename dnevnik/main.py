@@ -758,7 +758,7 @@ function renderTeacherCard(m) {
         ${m.has_announcement ? ' · <b style="color:#ff9500;">📢 объявление</b>' : ''}
         ${m.has_schedule ? ' · 📅 расписание' : ''}
         ${m.has_homework ? ' · 📚 домашка' : ''}`;
-  const fullText = escapeHtml(m.raw_text || m.announcement_summary || '(без текста)').replace(/\n/g, '<br>');
+  const fullText = escapeHtml(m.raw_text || m.announcement_summary || '(без текста)').replace(/\\n/g, '<br>');
   const preview = escapeHtml((m.raw_text || m.announcement_summary || '(без текста)').slice(0, 70));
   const isLong = (m.raw_text || m.announcement_summary || '').length > 70;
 
