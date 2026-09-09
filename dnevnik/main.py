@@ -1830,12 +1830,12 @@ setInterval(updateLiveTimer, 1000);
 
 @app.route("/parent")
 def parent_view():
-    return render_template_string(PARENT_HTML, api_base="", student_name="Александра", class_name="5 «в»", theme="football")
+    return render_template_string(PARENT_HTML, api_base="", student_name="Александра", class_name="5 «в»")
 
 
 @app.route("/child")
 def child_view():
-    return render_template_string(CHILD_HTML, api_base="", student_name="Александра", class_name="5 «в»", theme="football")
+    return render_template_string(CHILD_HTML, api_base="", student_name="Александра", class_name="5 «в»")
 
 
 @app.route("/evgeniy/parent")
