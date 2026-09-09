@@ -16,6 +16,8 @@ GREEN_API_ID_INSTANCE = os.environ.get("GREEN_API_ID_INSTANCE", "")
 GREEN_API_API_TOKEN = os.environ.get("GREEN_API_API_TOKEN", "")
 GREEN_API_CHAT_ID = os.environ.get("GREEN_API_CHAT_ID", "")  # id канала родители+учитель
 GREEN_API_CHAT_NAME = os.environ.get("GREEN_API_CHAT_NAME", "")  # если id неизвестен — ищем чат по имени
+GREEN_API_EXTRA_CHAT_NAMES = os.environ.get("GREEN_API_EXTRA_CHAT_NAMES", "")  # доп. источники через запятую (например личный архивный канал)
+ALLOWED_CHAT_IDS = set()  # заполняется при старте: основной чат + дополнительные
 TEACHER_NAME = os.environ.get("TEACHER_NAME", "Анастасия Харькина")  # классный руководитель — для выделения её сообщений
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -243,7 +245,7 @@ def webhook_max():
     chat_id = sender_data.get("chatId", "")
     sender_name = sender_data.get("senderContactName") or sender_data.get("senderName") or ""
 
-    if GREEN_API_CHAT_ID and chat_id != GREEN_API_CHAT_ID:
+    if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
         return jsonify({"ok": True, "skipped": "other chat"}), 200
 
     message_data = payload.get("messageData", {})
@@ -818,7 +820,7 @@ def _seed_manual_schedule():
 
 
 def _auto_configure():
-    global GREEN_API_CHAT_ID
+    global GREEN_API_CHAT_ID, ALLOWED_CHAT_IDS
 
     _seed_manual_schedule()
 
@@ -830,6 +832,19 @@ def _auto_configure():
             print(f"[startup] Найден чат '{resolved_name}' → chatId={resolved_id}")
         else:
             print(f"[startup] Чат по имени '{GREEN_API_CHAT_NAME}' не найден среди чатов аккаунта")
+
+    if GREEN_API_CHAT_ID:
+        ALLOWED_CHAT_IDS.add(GREEN_API_CHAT_ID)
+
+    # 1b. Дополнительные источники (например личный архивный канал для пересланных сообщений)
+    extra_names = [n.strip() for n in GREEN_API_EXTRA_CHAT_NAMES.split(",") if n.strip()]
+    for name in extra_names:
+        resolved_id, resolved_name = _resolve_chat_id_by_name(name)
+        if resolved_id:
+            ALLOWED_CHAT_IDS.add(resolved_id)
+            print(f"[startup] Доп. источник '{resolved_name}' → chatId={resolved_id}")
+        else:
+            print(f"[startup] Доп. источник по имени '{name}' не найден среди чатов аккаунта")
 
     # 2. Зарегистрировать вебхук на свой публичный домен (Railway задаёт его автоматически)
     public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
