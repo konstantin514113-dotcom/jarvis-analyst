@@ -27,8 +27,9 @@ GREEN_API_BASE = f"https://api.green-api.com/waInstance{GREEN_API_ID_INSTANCE}"
 # ---------- DB ----------
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
@@ -157,17 +158,14 @@ def _get_known_subject_for_sender(sender_name):
     return row["subject"] if row else None
 
 
-def _remember_teacher_subject(sender_name, subject):
+def _remember_teacher_subject(conn, sender_name, subject):
     if not sender_name or not subject:
         return
-    conn = get_db()
     conn.execute(
         "INSERT INTO teacher_subjects (sender_name, subject, updated_at) VALUES (?, ?, ?) "
         "ON CONFLICT(sender_name) DO UPDATE SET subject = excluded.subject, updated_at = excluded.updated_at",
         (sender_name, subject, datetime.datetime.utcnow().isoformat()),
     )
-    conn.commit()
-    conn.close()
 
 
 def parse_message_with_llm(text, image_b64=None, image_media_type=None, day_name=None, sender_name=None):
@@ -294,7 +292,7 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
     for item in parsed.get("homework", []):
         gdz_link = build_gdz_link(item.get("subject"), item.get("page"), item.get("exercise"))
         print(f"[homework] subject={item.get('subject')!r} task={item.get('task')!r} page={item.get('page')!r} exercise={item.get('exercise')!r}")
-        _remember_teacher_subject(sender_name, item.get("subject"))
+        _remember_teacher_subject(conn, sender_name, item.get("subject"))
         conn.execute(
             "INSERT INTO homework (subject, task, page, exercise, assigned_date, due_date, gdz_link, solution, source_message_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
