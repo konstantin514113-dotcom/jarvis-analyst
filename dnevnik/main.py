@@ -365,7 +365,7 @@ def _backfill_chat_history(chat_id, max_messages=1000):
                 text = (msg.get("extendedTextMessage") or {}).get("text", "")
             elif type_message in ("imageMessage",):
                 file_info = msg.get("fileMessageData") or msg.get("imageMessage") or {}
-                caption = file_info.get("caption", "") or ""
+                caption = file_info.get("caption") or msg.get("caption") or ""
                 text = caption
                 download_url = file_info.get("downloadUrl") or msg.get("downloadUrl")
                 image_url = download_url
