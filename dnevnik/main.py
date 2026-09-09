@@ -584,6 +584,8 @@ PARENT_HTML = """<!doctype html>
   .cal-lesson .num { color:#8e8e93; font-size:11px; margin-right:4px; }
   .cal-lesson .subj { font-weight:600; }
   .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
+  .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff3b30; margin-left:5px; vertical-align:middle; }
+  .cal-lesson.has-hw { background:#fff0ef; }
 </style>
 </head>
 <body>
@@ -617,7 +619,7 @@ function groupBySubject(items) {
   return groups;
 }
 
-function renderCalendar(schedule) {
+function renderCalendar(schedule, hwSubjects) {
   const byDay = {};
   schedule.forEach(s => {
     const day = s.day_of_week || 'Без дня';
@@ -632,11 +634,14 @@ function renderCalendar(schedule) {
   return days.map(day => `
     <div class="cal-col">
       <div class="cal-day">${day}</div>
-      ${byDay[day].map((s, i) => `
-        <div class="cal-lesson">
-          <span class="num">${i + 1}.</span><span class="subj">${s.time ? s.time + ' ' : ''}${s.subject || ''}</span>
+      ${byDay[day].map((s, i) => {
+        const hasHw = hwSubjects && hwSubjects.has(s.subject);
+        return `
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}">
+          <span class="num">${i + 1}.</span><span class="subj">${s.time ? s.time + ' ' : ''}${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>`).join('');
 }
 
@@ -647,7 +652,8 @@ async function load() {
   document.getElementById('msg-counter').textContent =
     `Сообщений из «5в класс»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
 
-  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule);
+  const hwSubjects = new Set(data.homework.filter(h => !h.child_done).map(h => h.subject));
+  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwSubjects);
 
   const hEl = document.getElementById('homework');
   const groups = groupBySubject(data.homework);
@@ -708,6 +714,8 @@ CHILD_HTML = """<!doctype html>
   .cal-lesson .num { color:#c99a4a; font-size:11px; margin-right:4px; }
   .cal-lesson .subj { font-weight:600; }
   .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
+  .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff3b30; margin-left:5px; vertical-align:middle; }
+  .cal-lesson.has-hw { background:#ffe9e6; }
 </style>
 </head>
 <body>
@@ -727,7 +735,7 @@ async function toggleDone(id, done) {
   load();
 }
 
-function renderCalendar(schedule) {
+function renderCalendar(schedule, hwSubjects) {
   const byDay = {};
   schedule.forEach(s => {
     const day = s.day_of_week || 'Без дня';
@@ -742,11 +750,14 @@ function renderCalendar(schedule) {
   return days.map(day => `
     <div class="cal-col">
       <div class="cal-day">${day}</div>
-      ${byDay[day].map((s, i) => `
-        <div class="cal-lesson">
-          <span class="num">${i + 1}.</span><span class="subj">${s.subject || ''}</span>
+      ${byDay[day].map((s, i) => {
+        const hasHw = hwSubjects && hwSubjects.has(s.subject);
+        return `
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}">
+          <span class="num">${i + 1}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>`).join('');
 }
 
@@ -763,7 +774,10 @@ async function load() {
       <button onclick="toggleDone(${h.id}, ${h.child_done ? 1 : 0})">${h.child_done ? '↩️ Не сделано' : '✅ Сделал(а)'}</button>
     </div>`).join('') : '<div class="empty">Пока ничего нет 🎉</div>';
 
-  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule);
+  document.getElementById('schedule').innerHTML = renderCalendar(
+    data.schedule,
+    new Set(data.homework.filter(h => !h.child_done).map(h => h.subject))
+  );
 }
 load();
 setInterval(load, 30000);
