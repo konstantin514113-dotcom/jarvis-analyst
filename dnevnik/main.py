@@ -43,6 +43,7 @@ def init_db():
             raw_text TEXT,
             quoted_text TEXT,
             has_image INTEGER DEFAULT 0,
+            image_url TEXT,
             received_at TEXT,
             parsed_json TEXT
         )
@@ -188,7 +189,7 @@ def _message_already_processed(max_message_id):
     return row is not None
 
 
-def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None, quoted_text=None):
+def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None, quoted_text=None, image_url=None):
     if _message_already_processed(max_message_id):
         return "duplicate"
 
@@ -202,8 +203,8 @@ def _process_and_store(text, image_b64, image_media_type, max_message_id, receiv
 
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO messages (max_message_id, chat_id, sender_name, raw_text, quoted_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (max_message_id, chat_id, sender_name, text, quoted_text, has_image, received_at, json.dumps(parsed, ensure_ascii=False)),
+        "INSERT INTO messages (max_message_id, chat_id, sender_name, raw_text, quoted_text, has_image, image_url, received_at, parsed_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (max_message_id, chat_id, sender_name, text, quoted_text, has_image, image_url, received_at, json.dumps(parsed, ensure_ascii=False)),
     )
     message_row_id = cur.lastrowid
 
@@ -265,6 +266,7 @@ def webhook_max():
     text = ""
     image_b64 = None
     image_media_type = None
+    image_url = None
 
     quoted = message_data.get("quotedMessage") or {}
     quoted_text = (
@@ -289,6 +291,7 @@ def webhook_max():
             if guessed:
                 mime = guessed
         if mime.startswith("image/"):
+            image_url = download_url
             if download_url:
                 try:
                     image_b64 = download_green_api_file(download_url)
@@ -302,7 +305,7 @@ def webhook_max():
     max_message_id = payload.get("idMessage", "")
     received_at = datetime.datetime.utcnow().isoformat()
 
-    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text)
+    result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text, image_url)
     print(f"[webhook] Обработано: chatId={chat_id!r} idMessage={max_message_id!r} result={result!r} text_preview={text[:80]!r}")
 
     return jsonify({"ok": True, "result": result}), 200
@@ -351,6 +354,7 @@ def _backfill_chat_history(chat_id, max_messages=1000):
             text = ""
             image_b64 = None
             image_media_type = None
+            image_url = None
 
             if type_message == "textMessage":
                 text = msg.get("textMessage", "")
@@ -361,6 +365,7 @@ def _backfill_chat_history(chat_id, max_messages=1000):
                 caption = file_info.get("caption", "") or ""
                 text = caption
                 download_url = file_info.get("downloadUrl") or msg.get("downloadUrl")
+                image_url = download_url
                 mime = (
                     file_info.get("mimeType")
                     or _guess_mime_from_name(msg.get("fileName"))
@@ -387,7 +392,7 @@ def _backfill_chat_history(chat_id, max_messages=1000):
                 if ts else datetime.datetime.utcnow().isoformat()
             )
 
-            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text)
+            result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text, image_url)
             if result == "ok":
                 processed += 1
         except Exception as e:
@@ -510,7 +515,9 @@ def api_data():
         "SELECT * FROM schedule ORDER BY date IS NULL, date, time"
     ).fetchall()
     homework_rows = conn.execute(
-        "SELECT * FROM homework ORDER BY due_date IS NULL, due_date, id DESC"
+        "SELECT h.*, m.image_url AS source_image_url FROM homework h "
+        "LEFT JOIN messages m ON m.id = h.source_message_id "
+        "ORDER BY h.due_date IS NULL, h.due_date, h.id DESC"
     ).fetchall()
     teacher_rows = conn.execute(
         "SELECT id, sender_name, raw_text, quoted_text, has_image, received_at, parsed_json FROM messages "
@@ -634,6 +641,7 @@ function renderHwGroup(items) {
       <div class="meta">${h.page ? 'стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
       <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
       <div class="meta">${h.due_date ? 'Сдать: ' + h.due_date : ''}</div>
+      ${h.source_image_url ? `<a href="${h.source_image_url}" target="_blank"><img src="${h.source_image_url}" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
       ${h.child_done ? '<div class="badge-child">✅ ребёнок отметил как сделано</div>' : '<div class="badge-child">⏳ ребёнок ещё не отметил</div>'}
       <div class="row">
         <button class="btn btn-seen ${h.parent_seen ? '' : 'off'}" onclick="markSeen(${h.id}, ${h.parent_seen ? 1 : 0})">${h.parent_seen ? '✓ Просмотрено' : 'Отметить просмотренным'}</button>
@@ -857,6 +865,7 @@ async function load() {
       <div class="subject">${h.subject || ''}</div>
       <div class="task">${h.task || ''} ${h.page ? '(стр. ' + h.page + (h.exercise ? ', №' + h.exercise : '') + ')' : ''}</div>
       ${h.due_date ? `<div class="due">Сдать: ${h.due_date}</div>` : ''}
+      ${h.source_image_url ? `<a href="${h.source_image_url}" target="_blank"><img src="${h.source_image_url}" style="max-width:100%;border-radius:12px;margin-top:8px;display:block;" loading="lazy"></a>` : ''}
       <button onclick="toggleDone(${h.id}, ${h.child_done ? 1 : 0})">${h.child_done ? '↩️ Не сделано' : '✅ Сделал(а)'}</button>
     </div>`).join('') : '<div class="empty">Пока ничего нет 🎉</div>';
 
