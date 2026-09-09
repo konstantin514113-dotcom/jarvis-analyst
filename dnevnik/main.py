@@ -309,7 +309,7 @@ def webhook_max():
     received_at = datetime.datetime.utcnow().isoformat()
 
     result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text, image_url)
-    print(f"[webhook] Обработано: chatId={chat_id!r} idMessage={max_message_id!r} result={result!r} text_preview={text[:80]!r}")
+    print(f"[webhook] Обработано: chatId={chat_id!r} idMessage={max_message_id!r} result={result!r} text_len={len(text)} text_preview={text[:80]!r}")
 
     return jsonify({"ok": True, "result": result}), 200
 
@@ -396,6 +396,7 @@ def _backfill_chat_history(chat_id, max_messages=1000):
             )
 
             result = _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name, chat_id, quoted_text, image_url)
+            print(f"[backfill] idMessage={max_message_id!r} result={result!r} text_len={len(text)}")
             if result == "ok":
                 processed += 1
         except Exception as e:
