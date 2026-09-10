@@ -1239,7 +1239,7 @@ async function load() {
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
   const hwDaySubjects = new Set(
-    data.homework.filter(h => !h.child_done && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
+    data.homework.filter(h => !h.parent_seen && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
       .map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject))
   );
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
