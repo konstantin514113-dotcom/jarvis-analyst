@@ -902,6 +902,9 @@ function getLiveStatus() {
   }
 
   if (nowMin < periods[0].start) {
+    if (nowMin < 465) { // до 7:45 полоса вообще не показывается
+      return { type: 'hidden', dayName };
+    }
     return { type: 'before', dayName, remainingMin: periods[0].start - nowMin, nextIndex: periods[0].num };
   }
   for (let i = 0; i < periods.length; i++) {
@@ -934,6 +937,10 @@ function updateLiveTimer() {
   document.querySelectorAll('.cal-lesson.active-lesson').forEach(n => n.classList.remove('active-lesson'));
   document.querySelectorAll('.lesson-progress-track').forEach(n => n.style.display = 'none');
 
+  if (st.type === 'hidden') {
+    el.style.display = 'none';
+    return;
+  }
   if (st.type === 'none' || st.type === 'after') {
     el.style.display = 'block';
     el.innerHTML = `<div>${st.label}</div>`;
@@ -1457,6 +1464,9 @@ function getLiveStatus() {
   }
 
   if (nowMin < periods[0].start) {
+    if (nowMin < 465) { // до 7:45 полоса вообще не показывается
+      return { type: 'hidden', dayName };
+    }
     return { type: 'before', dayName, remainingMin: periods[0].start - nowMin, nextIndex: periods[0].num };
   }
   for (let i = 0; i < periods.length; i++) {
@@ -1489,6 +1499,10 @@ function updateLiveTimer() {
   document.querySelectorAll('.cal-lesson.active-lesson').forEach(n => n.classList.remove('active-lesson'));
   document.querySelectorAll('.lesson-progress-track').forEach(n => n.style.display = 'none');
 
+  if (st.type === 'hidden') {
+    el.style.display = 'none';
+    return;
+  }
   if (st.type === 'none' || st.type === 'after') {
     el.style.display = 'block';
     el.innerHTML = `<div>${st.label}</div>`;
