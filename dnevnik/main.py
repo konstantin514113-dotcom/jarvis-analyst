@@ -5,6 +5,7 @@ import sqlite3
 import datetime
 import urllib.parse
 import threading
+import time
 import requests
 from flask import Flask, request, jsonify, render_template_string
 
@@ -2157,15 +2158,18 @@ def _auto_configure():
 
     # 3. Подтягиваем историю из всех источников (main + extras + Евгений) в фоне, каждый в свою базу.
     #    _process_and_store дедуплицирует по max_message_id, так что повторные запуски дёшевы.
+    #    Запускаем последовательно с паузой между чатами — иначе параллельные запросы
+    #    к green-api могут словить 429 (Too Many Requests) и часть истории не подтянется.
     if ALLOWED_CHAT_IDS:
-        print(f"[startup] Запускаю загрузку истории для {len(ALLOWED_CHAT_IDS)} чат(ов) (в фоне)...")
-        for cid in ALLOWED_CHAT_IDS:
-            threading.Thread(
-                target=_backfill_chat_history,
-                args=(cid,),
-                kwargs={"max_messages": 1000, "db_path": db_path_for_chat(cid)},
-                daemon=True,
-            ).start()
+        print(f"[startup] Запускаю загрузку истории для {len(ALLOWED_CHAT_IDS)} чат(ов) (в фоне, последовательно)...")
+
+        def _run_backfills_sequential(chat_ids):
+            for i, cid in enumerate(chat_ids):
+                if i > 0:
+                    time.sleep(5)
+                _backfill_chat_history(cid, max_messages=1000, db_path=db_path_for_chat(cid))
+
+        threading.Thread(target=_run_backfills_sequential, args=(list(ALLOWED_CHAT_IDS),), daemon=True).start()
 
 
 _auto_configure()  # выполняется один раз при импорте модуля (в т.ч. под gunicorn)
