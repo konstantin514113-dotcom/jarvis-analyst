@@ -284,6 +284,29 @@ def _message_already_processed(max_message_id, db_path=None):
     return row is not None
 
 
+def _get_existing_message(max_message_id, db_path=None):
+    if not max_message_id:
+        return None
+    conn = get_db(db_path)
+    row = conn.execute(
+        "SELECT id, raw_text, has_image FROM messages WHERE max_message_id = ?", (max_message_id,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def _delete_message_cascade(message_row_id, db_path=None):
+    """Удаляет сообщение и всё, что было построено на его основе (расписание/домашка/справочные
+    материалы с этим source_message_id) — используется при обнаружении правки сообщения."""
+    conn = get_db(db_path)
+    conn.execute("DELETE FROM schedule WHERE source_message_id = ?", (message_row_id,))
+    conn.execute("DELETE FROM homework WHERE source_message_id = ?", (message_row_id,))
+    conn.execute("DELETE FROM reference_docs WHERE source_message_id = ?", (message_row_id,))
+    conn.execute("DELETE FROM messages WHERE id = ?", (message_row_id,))
+    conn.commit()
+    conn.close()
+
+
 _PY_DAY_NAMES = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 
 
@@ -296,8 +319,14 @@ def _weekday_name_from_iso(dt_str):
 
 
 def _process_and_store(text, image_b64, image_media_type, max_message_id, received_at, sender_name=None, chat_id=None, quoted_text=None, image_url=None, db_path=None):
-    if _message_already_processed(max_message_id, db_path):
-        return "duplicate"
+    existing = _get_existing_message(max_message_id, db_path)
+    if existing is not None:
+        if (existing["raw_text"] or "") == (text or "") and existing["has_image"] == (1 if image_b64 else 0):
+            return "duplicate"
+        # Текст изменился — это правка сообщения (пересланного или отредактированного в MAX).
+        # Удаляем старую версию (и всё, что было построено на её основе) и разбираем заново.
+        _delete_message_cascade(existing["id"], db_path)
+        print(f"[edit] Обнаружена правка сообщения idMessage={max_message_id!r} — переразбираю")
 
     has_image = 1 if image_b64 else 0
     day_name = _weekday_name_from_iso(received_at)
@@ -1870,20 +1899,32 @@ def index():
 # ---------- Автонастройка при запуске (работает и под gunicorn) ----------
 
 def _resolve_chat_id_by_name(name_query):
-    """Ищет чат по подстроке в имени среди групповых чатов аккаунта."""
+    """Ищет чат по имени среди чатов аккаунта. Сначала пробует точное совпадение имени
+    (без учёта регистра) — это надёжно, даже если есть другие чаты с похожим названием.
+    Если точного совпадения нет, ищет по подстроке, но предупреждает, если совпадений
+    больше одного (чтобы не привязаться по ошибке не к тому чату)."""
     try:
         r = requests.get(f"{GREEN_API_BASE}/getChats/{GREEN_API_API_TOKEN}", timeout=20)
         r.raise_for_status()
         chats = r.json()
         print(f"[startup] Всего чатов в аккаунте: {len(chats)}")
-        if chats:
-            print(f"[startup] Пример структуры чата (raw): {chats[0]}")
-        name_query_low = name_query.lower()
-        for chat in chats:
-            chat_name = (chat.get("name") or "").lower()
-            if name_query_low in chat_name:
-                chat_id = chat.get("id") or chat.get("chatId") or chat.get("jid") or chat.get("contactId")
-                return chat_id, chat.get("name")
+        name_query_low = name_query.lower().strip()
+
+        def chat_id_of(chat):
+            return chat.get("id") or chat.get("chatId") or chat.get("jid") or chat.get("contactId")
+
+        exact = [c for c in chats if (c.get("name") or "").lower().strip() == name_query_low]
+        if len(exact) == 1:
+            return chat_id_of(exact[0]), exact[0].get("name")
+        if len(exact) > 1:
+            print(f"[startup] ВНИМАНИЕ: {len(exact)} чатов с именем ровно '{name_query}' — беру первый, но это может быть не тот чат: {exact}")
+            return chat_id_of(exact[0]), exact[0].get("name")
+
+        substring = [c for c in chats if name_query_low in (c.get("name") or "").lower()]
+        if len(substring) > 1:
+            print(f"[startup] ВНИМАНИЕ: {len(substring)} чатов подходят под '{name_query}' по подстроке — результат может быть нестабильным между перезапусками: {[c.get('name') for c in substring]}")
+        if substring:
+            return chat_id_of(substring[0]), substring[0].get("name")
     except Exception as e:
         print(f"[startup] Не удалось получить список чатов: {e}")
     return None, None
