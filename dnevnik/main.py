@@ -140,6 +140,8 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
   "is_chatter": true/false,
   "message_date": "YYYY-MM-DD или null — РЕАЛЬНАЯ дата этого сообщения/переписки, ЕСЛИ она явно указана ОТДЕЛЬНОЙ служебной строкой вида 'ДАТА: 15.05.2026' в начале сообщения (это специальная отметка для пересланных сообщений). НЕ извлекай дату из обычных упоминаний внутри текста задания вроде 'ДЗ от 9.09' или 'домашка на 15.05' — это НЕ команда на переопределение даты, оставляй message_date = null в таких случаях, дата будет взята из времени получения сообщения автоматически.",
   "is_reference_doc": "true/false — это справочный документ/таблица общего назначения от классного руководителя: расписание по четвертям, каникулы, расписание звонков, список учебников, контакты, правила и т.п. (НЕ обычное расписание уроков на неделю и НЕ домашнее задание — для них своя логика).",
+  "is_schedule_change": "true/false — сообщение говорит об ИЗМЕНЕНИИ в обычном расписании уроков: замена урока/учителя, отмена урока, перенос на другое время/день, изменение кабинета, объединение или разделение классов и т.п. НЕ ставь true для обычной публикации расписания на неделю/четверть — только для отклонения от уже известного расписания.",
+  "schedule_change_summary": "если is_schedule_change=true — краткое (1-2 предложения) описание сути изменения понятным языком: что именно меняется, когда, для какого урока. Иначе null.",
   "reference_type": "короткое название типа документа (например 'Расписание по четвертям', 'Расписание звонков', 'Каникулы', 'Список учебников') или null",
   "reference_content": "ПОЛНОЕ структурированное содержание документа текстом (все даты, все строки таблицы, ничего не сокращай) или null",
   "schedule": [
@@ -156,6 +158,7 @@ PARSE_SYSTEM_PROMPT = """Ты извлекаешь структурирован�
 - Если сообщение начинается с явной отметки даты вида "ДАТА: 15.05.2026" (именно такой отдельной строкой, с двоеточием, в начале сообщения) — это реальная дата пересланного сообщения, верни её в message_date в формате YYYY-MM-DD и не включай саму отметку в анализ содержания. Любые другие упоминания дат внутри обычного текста (например "домашка от 9.09", "ДЗ на 15 мая") — это часть содержания задания, а НЕ команда на переопределение даты; в этих случаях message_date = null.
 - По умолчанию (без метки "ДАТА:") считай, что домашнее задание относится к сегодняшнему дню и к уроку, который был сегодня по расписанию — учителя, как правило, пишут задание в тот же день, когда был урок. Именно поэтому message_date почти всегда должен быть null (дата определится автоматически по времени получения сообщения) — не пытайся её "угадать" или скорректировать самостоятельно.
 - Если сообщение (текст или фото) содержит справочную таблицу/документ общего назначения от классного руководителя (расписание по четвертям на год, даты каникул, расписание звонков, список учебников и т.п.) — обязательно выстави is_reference_doc=true, укажи reference_type и перепиши ВСЁ содержимое таблицы в reference_content максимально подробно и структурированно (списком или построчно), не теряя ни одной даты или строки. Это может идти одновременно с has_announcement или отдельно.
+- Внимательно отслеживай сообщения об ИЗМЕНЕНИИ в расписании: "завтра вместо X будет Y", "урок физкультуры переносится", "отмена урока ...", "кабинет меняется на ...", "уроки объединяются с параллельным классом" и т.п. Это отличается от обычной публикации расписания — здесь речь именно об отклонении от уже действующего расписания. В таких случаях ставь is_schedule_change=true и коротко опиши суть в schedule_change_summary.
 - Если дата не указана явно текстом, оставь date как null, не угадывай.
 - Если это скриншот переписки — вычленяй только полезную информацию, игнорируй смайлики и болтовню на фото.
 - Частый паттерн: подпись к фото — это ТОЛЬКО название предмета (например "Русский", "Математика"), а само задание написано на фотографии (страница учебника, тетрадь, распечатка). В этом случае используй подпись как subject, а содержание задания (номер упражнения, страницу, суть задания) прочитай с фотографии и запиши в homework. Не помечай такое сообщение как is_chatter только из-за короткой подписи — смотри на содержимое фото.
@@ -707,6 +710,8 @@ def _api_data_impl(db_path, teacher_name, main_chat_id):
         row["announcement_summary"] = parsed.get("announcement_summary")
         row["has_schedule"] = bool(parsed.get("has_schedule"))
         row["has_homework"] = bool(parsed.get("has_homework"))
+        row["is_schedule_change"] = bool(parsed.get("is_schedule_change"))
+        row["schedule_change_summary"] = parsed.get("schedule_change_summary")
         teacher_messages.append(row)
 
     homework_list = [dict(r) for r in homework_rows]
@@ -864,6 +869,7 @@ PARENT_HTML = """<!doctype html>
 <body>
 <h1>📋 Дневник {{ student_name }} — {{ class_name }}</h1>
 <div id="msg-counter" style="font-size:13px;color:#8e8e93;margin:-8px 0 12px;">Загрузка...</div>
+<div id="schedule-alert" style="display:none;"></div>
 <div class="section-title">Расписание</div>
 <div id="live-status"></div>
 <div class="hw-hint">🔴 — есть домашнее задание, нажми на урок, чтобы посмотреть</div>
@@ -1258,7 +1264,21 @@ async function load() {
   const data = await res.json();
 
   document.getElementById('msg-counter').textContent =
-    `Сообщений из «5в класс»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
+    `Сообщений из «{{ class_name }}»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
+
+  const scheduleAlerts = (data.teacher_messages || []).filter(m => m.is_schedule_change).slice(0, 5);
+  const alertEl = document.getElementById('schedule-alert');
+  if (scheduleAlerts.length) {
+    alertEl.style.display = 'block';
+    alertEl.innerHTML = scheduleAlerts.map(m => `
+      <div style="background:#fff3cd;border:1px solid #f0ad4e;border-radius:10px;padding:12px 14px;margin-bottom:8px;">
+        <div style="font-weight:600;color:#8a6100;">⚠️ Изменение в расписании</div>
+        <div style="margin-top:4px;">${m.schedule_change_summary || ''}</div>
+        <div style="font-size:12px;color:#8a6100;opacity:.7;margin-top:4px;">${m.sender_name || ''} · ${new Date(m.received_at).toLocaleString('ru-RU')}</div>
+      </div>`).join('');
+  } else {
+    alertEl.style.display = 'none';
+  }
 
   const todayName = DAY_ORDER[(new Date().getDay() + 6) % 7];
   const todayRows = data.schedule.filter(s => s.day_of_week === todayName);
@@ -1426,6 +1446,7 @@ CHILD_HTML = """<!doctype html>
 <body>
 <h1>📋 Дневник {{ student_name }} — {{ class_name }}</h1>
 <div id="msg-counter" style="font-size:13px;color:#8e8e93;margin:-8px 0 12px;">Загрузка...</div>
+<div id="schedule-alert" style="display:none;"></div>
 <div class="section-title">Расписание</div>
 <div id="live-status"></div>
 <div class="hw-hint">🔴 — есть домашнее задание, нажми на урок, чтобы посмотреть</div>
@@ -1817,6 +1838,20 @@ async function load() {
 
   document.getElementById('msg-counter').textContent =
     `Сообщений из «{{ class_name }}»: ${data.main_chat_message_count} · всего в базе: ${data.total_message_count}`;
+
+  const scheduleAlerts = (data.teacher_messages || []).filter(m => m.is_schedule_change).slice(0, 5);
+  const alertEl = document.getElementById('schedule-alert');
+  if (scheduleAlerts.length) {
+    alertEl.style.display = 'block';
+    alertEl.innerHTML = scheduleAlerts.map(m => `
+      <div style="background:#fff3cd;border:1px solid #f0ad4e;border-radius:10px;padding:12px 14px;margin-bottom:8px;">
+        <div style="font-weight:600;color:#8a6100;">⚠️ Изменение в расписании</div>
+        <div style="margin-top:4px;">${m.schedule_change_summary || ''}</div>
+        <div style="font-size:12px;color:#8a6100;opacity:.7;margin-top:4px;">${m.sender_name || ''} · ${new Date(m.received_at).toLocaleString('ru-RU')}</div>
+      </div>`).join('');
+  } else {
+    alertEl.style.display = 'none';
+  }
 
   const todayName = DAY_ORDER[(new Date().getDay() + 6) % 7];
   const todayRows = data.schedule.filter(s => s.day_of_week === todayName);
