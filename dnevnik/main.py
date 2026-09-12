@@ -1024,6 +1024,21 @@ function dateToDayName(dateStr) {
   return DAY_ORDER[idx];
 }
 
+function nextLessonDayFor(assignedDayName, normalizedSubject, subjectsByDay) {
+  // Ищем ближайший СЛЕДУЮЩИЙ день (после дня выдачи, по кругу через неделю), где этот
+  // предмет есть по расписанию — чтобы родитель видел домашку на дне, к которому её
+  // нужно готовить, а не только в день, когда её задали.
+  const startIdx = DAY_ORDER.indexOf(assignedDayName);
+  if (startIdx === -1) return assignedDayName;
+  for (let step = 1; step <= 6; step++) {
+    const day = DAY_ORDER[(startIdx + step) % 7];
+    if (subjectsByDay[day] && subjectsByDay[day].has(normalizedSubject)) {
+      return day;
+    }
+  }
+  return assignedDayName; // предмет больше нигде на неделе не встречается — оставляем как есть
+}
+
 function dateNumForDay(dayName) {
   const idx = DAY_ORDER.indexOf(dayName);
   if (idx === -1) return '';
@@ -1288,9 +1303,20 @@ async function load() {
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
+  const subjectsByDay = {};
+  data.schedule.forEach(s => {
+    if (!s.day_of_week || !s.subject) return;
+    if (!subjectsByDay[s.day_of_week]) subjectsByDay[s.day_of_week] = new Set();
+    subjectsByDay[s.day_of_week].add(normalizeSubject(s.subject));
+  });
   const hwDaySubjects = new Set(
     data.homework.filter(h => !h.parent_seen && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
-      .map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject))
+      .map(h => {
+        const normSubj = normalizeSubject(h.subject);
+        const assignedDay = dateToDayName(h.assigned_date);
+        const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
+        return dueDay + '|' + normSubj;
+      })
   );
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
   if (!window.__scrolledToday) {
@@ -1601,6 +1627,21 @@ function dateToDayName(dateStr) {
   return DAY_ORDER[idx];
 }
 
+function nextLessonDayFor(assignedDayName, normalizedSubject, subjectsByDay) {
+  // Ищем ближайший СЛЕДУЮЩИЙ день (после дня выдачи, по кругу через неделю), где этот
+  // предмет есть по расписанию — чтобы родитель видел домашку на дне, к которому её
+  // нужно готовить, а не только в день, когда её задали.
+  const startIdx = DAY_ORDER.indexOf(assignedDayName);
+  if (startIdx === -1) return assignedDayName;
+  for (let step = 1; step <= 6; step++) {
+    const day = DAY_ORDER[(startIdx + step) % 7];
+    if (subjectsByDay[day] && subjectsByDay[day].has(normalizedSubject)) {
+      return day;
+    }
+  }
+  return assignedDayName; // предмет больше нигде на неделе не встречается — оставляем как есть
+}
+
 function dateNumForDay(dayName) {
   const idx = DAY_ORDER.indexOf(dayName);
   if (idx === -1) return '';
@@ -1861,9 +1902,20 @@ async function load() {
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
+  const subjectsByDay = {};
+  data.schedule.forEach(s => {
+    if (!s.day_of_week || !s.subject) return;
+    if (!subjectsByDay[s.day_of_week]) subjectsByDay[s.day_of_week] = new Set();
+    subjectsByDay[s.day_of_week].add(normalizeSubject(s.subject));
+  });
   const hwDaySubjects = new Set(
     data.homework.filter(h => !h.child_done && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
-      .map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject))
+      .map(h => {
+        const normSubj = normalizeSubject(h.subject);
+        const assignedDay = dateToDayName(h.assigned_date);
+        const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
+        return dueDay + '|' + normSubj;
+      })
   );
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
   if (!window.__scrolledToday) {
