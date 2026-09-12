@@ -787,7 +787,9 @@ PARENT_HTML = """<!doctype html>
   .cal-lesson .subj { font-weight:600; }
   .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
   .cal-lesson .lesson-time { color:#0071e3; font-size:11px; margin-top:1px; font-weight:600; }
-  .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff3b30; margin-left:5px; vertical-align:middle; }
+  .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-left:5px; vertical-align:middle; }
+  .hw-dot-assigned { background:#ff3b30; }
+  .hw-dot-due { background:#0071e3; }
   .cal-lesson.has-hw { background:#fff0ef; cursor:pointer; }
   .cal-lesson.active-lesson { border:2px solid #0071e3; }
   .lesson-progress-track { height:4px; background:#e5e5ea; border-radius:2px; margin-top:5px; overflow:hidden; }
@@ -872,7 +874,7 @@ PARENT_HTML = """<!doctype html>
 <div id="schedule-alert" style="display:none;"></div>
 <div class="section-title">Расписание</div>
 <div id="live-status"></div>
-<div class="hw-hint">🔴 — есть домашнее задание, нажми на урок, чтобы посмотреть</div>
+<div class="hw-hint">🔴 — задано в этот день &nbsp; 🔵 — к этому дню нужно подготовить &nbsp; (нажми на урок, чтобы посмотреть)</div>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 <div class="section-title" id="homework-title" style="display:none;"></div>
 <div id="homework"></div>
@@ -1229,7 +1231,7 @@ function groupBySubject(items) {
   return groups;
 }
 
-function renderCalendar(schedule, hwDaySubjects) {
+function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
   const byDay = {};
   schedule.forEach(s => {
     const day = s.day_of_week || 'Без дня';
@@ -1262,10 +1264,14 @@ function renderCalendar(schedule, hwDaySubjects) {
         </div>`;
         }
         const key = day + '|' + normalizeSubject(s.subject);
-        const hasHw = hwDaySubjects && hwDaySubjects.has(key);
+        const isAssigned = hwAssignedSet && hwAssignedSet.has(key);
+        const isDue = hwDueSet && hwDueSet.has(key);
+        const hasHw = isAssigned || isDue;
+        const dots = (isAssigned ? '<span class="hw-dot hw-dot-assigned" title="Задано в этот день"></span>' : '')
+          + (isDue ? '<span class="hw-dot hw-dot-due" title="К этому дню нужно подготовить"></span>' : '');
         return `
         <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
-          <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
+          <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${dots}
           ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
@@ -1309,16 +1315,14 @@ async function load() {
     if (!subjectsByDay[s.day_of_week]) subjectsByDay[s.day_of_week] = new Set();
     subjectsByDay[s.day_of_week].add(normalizeSubject(s.subject));
   });
-  const hwDaySubjects = new Set(
-    data.homework.filter(h => !h.parent_seen && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
-      .map(h => {
-        const normSubj = normalizeSubject(h.subject);
-        const assignedDay = dateToDayName(h.assigned_date);
-        const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
-        return dueDay + '|' + normSubj;
-      })
-  );
-  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
+  const activeHw = data.homework.filter(h => !h.parent_seen && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo);
+  const hwAssignedSet = new Set(activeHw.map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject)));
+  const hwDueSet = new Set(activeHw.map(h => {
+    const normSubj = normalizeSubject(h.subject);
+    const assignedDay = dateToDayName(h.assigned_date);
+    return nextLessonDayFor(assignedDay, normSubj, subjectsByDay) + '|' + normSubj;
+  }));
+  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwAssignedSet, hwDueSet);
   if (!window.__scrolledToday) {
     window.__scrolledToday = true;
     setTimeout(scrollToToday, 50);
@@ -1333,10 +1337,14 @@ async function load() {
   hwByKey = {};
   data.homework.forEach(h => {
     if (!h.subject) return;
-    const day = dateToDayName(h.assigned_date);
-    const key = day + '|' + normalizeSubject(h.subject);
-    if (!hwByKey[key]) hwByKey[key] = [];
-    hwByKey[key].push(h);
+    const normSubj = normalizeSubject(h.subject);
+    const assignedDay = dateToDayName(h.assigned_date);
+    const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
+    [assignedDay, dueDay].forEach(day => {
+      const key = day + '|' + normSubj;
+      if (!hwByKey[key]) hwByKey[key] = [];
+      if (!hwByKey[key].includes(h)) hwByKey[key].push(h);
+    });
   });
   if (openHwKey && hwByKey[openHwKey]) {
     document.getElementById('homework').innerHTML = renderHwGroup(hwByKey[openHwKey]);
@@ -1390,7 +1398,9 @@ CHILD_HTML = """<!doctype html>
   .cal-lesson .subj { font-weight:600; }
   .cal-lesson .room { color:#8e8e93; font-size:11px; margin-top:1px; }
   .cal-lesson .lesson-time { color:#0071e3; font-size:11px; margin-top:1px; font-weight:600; }
-  .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff3b30; margin-left:5px; vertical-align:middle; }
+  .hw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-left:5px; vertical-align:middle; }
+  .hw-dot-assigned { background:#ff3b30; }
+  .hw-dot-due { background:#0071e3; }
   .cal-lesson.has-hw { background:#fff0ef; cursor:pointer; }
   .cal-lesson.active-lesson { border:2px solid #0071e3; }
   .lesson-progress-track { height:4px; background:#e5e5ea; border-radius:2px; margin-top:5px; overflow:hidden; }
@@ -1475,7 +1485,7 @@ CHILD_HTML = """<!doctype html>
 <div id="schedule-alert" style="display:none;"></div>
 <div class="section-title">Расписание</div>
 <div id="live-status"></div>
-<div class="hw-hint">🔴 — есть домашнее задание, нажми на урок, чтобы посмотреть</div>
+<div class="hw-hint">🔴 — задано в этот день &nbsp; 🔵 — к этому дню нужно подготовить &nbsp; (нажми на урок, чтобы посмотреть)</div>
 <div class="cal-wrap"><div id="schedule" class="cal"></div></div>
 <div class="section-title" id="homework-title" style="display:none;"></div>
 <div id="homework"></div>
@@ -1828,7 +1838,7 @@ function groupBySubject(items) {
   return groups;
 }
 
-function renderCalendar(schedule, hwDaySubjects) {
+function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
   const byDay = {};
   schedule.forEach(s => {
     const day = s.day_of_week || 'Без дня';
@@ -1861,10 +1871,14 @@ function renderCalendar(schedule, hwDaySubjects) {
         </div>`;
         }
         const key = day + '|' + normalizeSubject(s.subject);
-        const hasHw = hwDaySubjects && hwDaySubjects.has(key);
+        const isAssigned = hwAssignedSet && hwAssignedSet.has(key);
+        const isDue = hwDueSet && hwDueSet.has(key);
+        const hasHw = isAssigned || isDue;
+        const dots = (isAssigned ? '<span class="hw-dot hw-dot-assigned" title="Задано в этот день"></span>' : '')
+          + (isDue ? '<span class="hw-dot hw-dot-due" title="К этому дню нужно подготовить"></span>' : '');
         return `
         <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
-          <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${hasHw ? '<span class="hw-dot" title="Есть домашнее задание"></span>' : ''}
+          <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${dots}
           ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
         </div>`;
@@ -1908,16 +1922,14 @@ async function load() {
     if (!subjectsByDay[s.day_of_week]) subjectsByDay[s.day_of_week] = new Set();
     subjectsByDay[s.day_of_week].add(normalizeSubject(s.subject));
   });
-  const hwDaySubjects = new Set(
-    data.homework.filter(h => !h.child_done && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo)
-      .map(h => {
-        const normSubj = normalizeSubject(h.subject);
-        const assignedDay = dateToDayName(h.assigned_date);
-        const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
-        return dueDay + '|' + normSubj;
-      })
-  );
-  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwDaySubjects);
+  const activeHw = data.homework.filter(h => !h.child_done && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo);
+  const hwAssignedSet = new Set(activeHw.map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject)));
+  const hwDueSet = new Set(activeHw.map(h => {
+    const normSubj = normalizeSubject(h.subject);
+    const assignedDay = dateToDayName(h.assigned_date);
+    return nextLessonDayFor(assignedDay, normSubj, subjectsByDay) + '|' + normSubj;
+  }));
+  document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwAssignedSet, hwDueSet);
   if (!window.__scrolledToday) {
     window.__scrolledToday = true;
     setTimeout(scrollToToday, 50);
@@ -1932,10 +1944,14 @@ async function load() {
   hwByKey = {};
   data.homework.forEach(h => {
     if (!h.subject) return;
-    const day = dateToDayName(h.assigned_date);
-    const key = day + '|' + normalizeSubject(h.subject);
-    if (!hwByKey[key]) hwByKey[key] = [];
-    hwByKey[key].push(h);
+    const normSubj = normalizeSubject(h.subject);
+    const assignedDay = dateToDayName(h.assigned_date);
+    const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
+    [assignedDay, dueDay].forEach(day => {
+      const key = day + '|' + normSubj;
+      if (!hwByKey[key]) hwByKey[key] = [];
+      if (!hwByKey[key].includes(h)) hwByKey[key].push(h);
+    });
   });
   if (openHwKey && hwByKey[openHwKey]) {
     document.getElementById('homework').innerHTML = renderHwGroup(hwByKey[openHwKey]);
