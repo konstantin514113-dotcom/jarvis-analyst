@@ -1223,8 +1223,12 @@ function toggleHwKey(key, displaySubject, displayDay) {
 }
 
 function scrollToToday() {
-  const todayName = dateToDayName(new Date().toISOString().slice(0, 10));
-  const col = document.querySelector(`.cal-col[data-day="${todayName}"]`);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  let col = document.querySelector(`.cal-col[data-date="${todayIso}"]`);
+  if (!col) {
+    const todayName = dateToDayName(todayIso);
+    col = document.querySelector(`.cal-col[data-day="${todayName}"]`);
+  }
   if (col) {
     col.scrollIntoView({behavior: 'auto', inline: 'center', block: 'nearest'});
   }
@@ -1255,12 +1259,30 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
     if (!byDay[day]) byDay[day] = [];
     byDay[day].push(s);
   });
-  const days = Object.keys(byDay).sort((a, b) => {
-    const ia = DAY_ORDER.indexOf(a), ib = DAY_ORDER.indexOf(b);
-    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-  });
-  if (!days.length) return '<div class="empty">Пока нет данных</div>';
-  return days.map(day => {
+  if (!Object.keys(byDay).length) return '<div class="empty">Пока нет данных</div>';
+
+  // Показываем 2 недели вперёд: текущую неделю (Пн-Вс) + следующую. Расписание одно и то
+  // же по дням недели, но каждая колонка — это реальная календарная дата.
+  const now = new Date();
+  const curIdx = (now.getDay() + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - curIdx);
+  const todayIso = now.toISOString().slice(0, 10);
+
+  const columns = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const dayName = DAY_ORDER[i % 7];
+    if (!byDay[dayName]) continue; // нет уроков в этот день недели (например воскресенье) — пропускаем колонку
+    columns.push({ dayName, date: d, weekIndex: Math.floor(i / 7) });
+  }
+
+  return columns.map(col => {
+    const day = col.dayName;
+    const dateIso = col.date.toISOString().slice(0, 10);
+    const isToday = dateIso === todayIso;
+    const monthShort = col.date.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '');
     const byNum = {};
     byDay[day].forEach((s, i) => {
       const num = (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1);
@@ -1270,8 +1292,8 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
     const slots = [];
     for (let n = 1; n <= maxNum; n++) slots.push(byNum[n] || null);
     return `
-    <div class="cal-col" data-day="${day}">
-      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
+    <div class="cal-col" data-day="${day}" data-date="${dateIso}" style="${col.weekIndex > 0 ? 'opacity:.85;' : ''}">
+      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${col.date.getDate()} ${monthShort}</span>${isToday ? ' <span style="color:#0071e3;">●</span>' : ''}</div>
       ${slots.map((s, idx) => {
         const lessonNum = idx + 1;
         if (!s) {
@@ -1848,8 +1870,12 @@ function toggleHwKey(key, displaySubject, displayDay) {
 }
 
 function scrollToToday() {
-  const todayName = dateToDayName(new Date().toISOString().slice(0, 10));
-  const col = document.querySelector(`.cal-col[data-day="${todayName}"]`);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  let col = document.querySelector(`.cal-col[data-date="${todayIso}"]`);
+  if (!col) {
+    const todayName = dateToDayName(todayIso);
+    col = document.querySelector(`.cal-col[data-day="${todayName}"]`);
+  }
   if (col) {
     col.scrollIntoView({behavior: 'auto', inline: 'center', block: 'nearest'});
   }
@@ -1880,12 +1906,30 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
     if (!byDay[day]) byDay[day] = [];
     byDay[day].push(s);
   });
-  const days = Object.keys(byDay).sort((a, b) => {
-    const ia = DAY_ORDER.indexOf(a), ib = DAY_ORDER.indexOf(b);
-    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-  });
-  if (!days.length) return '<div class="empty">Пока нет данных</div>';
-  return days.map(day => {
+  if (!Object.keys(byDay).length) return '<div class="empty">Пока нет данных</div>';
+
+  // Показываем 2 недели вперёд: текущую неделю (Пн-Вс) + следующую. Расписание одно и то
+  // же по дням недели, но каждая колонка — это реальная календарная дата.
+  const now = new Date();
+  const curIdx = (now.getDay() + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - curIdx);
+  const todayIso = now.toISOString().slice(0, 10);
+
+  const columns = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const dayName = DAY_ORDER[i % 7];
+    if (!byDay[dayName]) continue; // нет уроков в этот день недели (например воскресенье) — пропускаем колонку
+    columns.push({ dayName, date: d, weekIndex: Math.floor(i / 7) });
+  }
+
+  return columns.map(col => {
+    const day = col.dayName;
+    const dateIso = col.date.toISOString().slice(0, 10);
+    const isToday = dateIso === todayIso;
+    const monthShort = col.date.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '');
     const byNum = {};
     byDay[day].forEach((s, i) => {
       const num = (s.time && /^\d+$/.test(s.time)) ? parseInt(s.time) : (i + 1);
@@ -1895,8 +1939,8 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
     const slots = [];
     for (let n = 1; n <= maxNum; n++) slots.push(byNum[n] || null);
     return `
-    <div class="cal-col" data-day="${day}">
-      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${dateNumForDay(day)}</span></div>
+    <div class="cal-col" data-day="${day}" data-date="${dateIso}" style="${col.weekIndex > 0 ? 'opacity:.85;' : ''}">
+      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${col.date.getDate()} ${monthShort}</span>${isToday ? ' <span style="color:#0071e3;">●</span>' : ''}</div>
       ${slots.map((s, idx) => {
         const lessonNum = idx + 1;
         if (!s) {
