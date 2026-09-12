@@ -1107,6 +1107,7 @@ function toggleTeacherMsg(id) {
 }
 
 let hwByKey = {};
+let subjectsByDay = {};
 let openHwKey = null;
 let archiveOpen = false;
 let allHomework = [];
@@ -1171,6 +1172,7 @@ function renderHwGroup(items) {
     <button class="btn btn-seen" style="background:#8e8e93;margin-bottom:10px;" onclick="closeHwPanel()">✕ Свернуть</button>
     ` + items.map(h => `
     <div class="card ${h.parent_seen ? 'seen' : ''}">
+      ${h._dayBadge ? `<div class="meta" style="font-weight:600;">${h._dayBadge}</div>` : ''}
       <div class="meta">${h.page ? 'стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
       <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
       <div class="meta">${h.due_date ? 'Сдать: ' + h.due_date : ''}</div>
@@ -1190,6 +1192,21 @@ function closeHwPanel() {
   document.getElementById('homework-title').style.display = 'none';
 }
 
+function labelHwForDay(items, displayDay) {
+  return items.map(h => {
+    const normSubj = normalizeSubject(h.subject);
+    const assignedDay = dateToDayName(h.assigned_date);
+    const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
+    const isAssigned = assignedDay === displayDay;
+    const isDue = dueDay === displayDay;
+    let badge = '';
+    if (isAssigned && isDue) badge = '🔴🔵 Задано и нужно к этому дню';
+    else if (isAssigned) badge = '🔴 Задано в этот день';
+    else if (isDue) badge = '🔵 К этому дню нужно подготовить';
+    return { ...h, _dayBadge: badge };
+  });
+}
+
 function toggleHwKey(key, displaySubject, displayDay) {
   const hEl = document.getElementById('homework');
   const titleEl = document.getElementById('homework-title');
@@ -1200,7 +1217,7 @@ function toggleHwKey(key, displaySubject, displayDay) {
   openHwKey = key;
   titleEl.textContent = `Домашнее задание: ${displaySubject || ''} (${displayDay || ''})`;
   titleEl.style.display = 'block';
-  hEl.innerHTML = renderHwGroup(hwByKey[key] || []);
+  hEl.innerHTML = renderHwGroup(labelHwForDay(hwByKey[key] || [], displayDay));
   hEl.classList.add('open');
   hEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
@@ -1309,7 +1326,7 @@ async function load() {
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
-  const subjectsByDay = {};
+  subjectsByDay = {};
   data.schedule.forEach(s => {
     if (!s.day_of_week || !s.subject) return;
     if (!subjectsByDay[s.day_of_week]) subjectsByDay[s.day_of_week] = new Set();
@@ -1347,7 +1364,8 @@ async function load() {
     });
   });
   if (openHwKey && hwByKey[openHwKey]) {
-    document.getElementById('homework').innerHTML = renderHwGroup(hwByKey[openHwKey]);
+    const openDay = openHwKey.split('|')[0];
+    document.getElementById('homework').innerHTML = renderHwGroup(labelHwForDay(hwByKey[openHwKey], openDay));
   } else if (openHwKey) {
     openHwKey = null;
     document.getElementById('homework').classList.remove('open');
@@ -1718,6 +1736,7 @@ function toggleTeacherMsg(id) {
 }
 
 let hwByKey = {};
+let subjectsByDay = {};
 let openHwKey = null;
 let archiveOpen = false;
 let allHomework = [];
@@ -1781,6 +1800,7 @@ function renderHwGroup(items) {
     <button class="btn btn-seen" style="background:#8e8e93;margin-bottom:10px;" onclick="closeHwPanel()">✕ Свернуть</button>
     ` + items.map(h => `
     <div class="card ${h.child_done ? 'seen' : ''}">
+      ${h._dayBadge ? `<div class="meta" style="font-weight:600;">${h._dayBadge}</div>` : ''}
       <div class="meta">${h.page ? 'стр. ' + h.page : ''} ${h.exercise ? '№' + h.exercise : ''}</div>
       <div class="subject" style="font-size:15px;font-weight:400;">${h.task || ''}</div>
       <div class="meta">${h.due_date ? 'Сдать: ' + h.due_date : ''}</div>
@@ -1797,6 +1817,21 @@ function closeHwPanel() {
   document.getElementById('homework-title').style.display = 'none';
 }
 
+function labelHwForDay(items, displayDay) {
+  return items.map(h => {
+    const normSubj = normalizeSubject(h.subject);
+    const assignedDay = dateToDayName(h.assigned_date);
+    const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
+    const isAssigned = assignedDay === displayDay;
+    const isDue = dueDay === displayDay;
+    let badge = '';
+    if (isAssigned && isDue) badge = '🔴🔵 Задано и нужно к этому дню';
+    else if (isAssigned) badge = '🔴 Задано в этот день';
+    else if (isDue) badge = '🔵 К этому дню нужно подготовить';
+    return { ...h, _dayBadge: badge };
+  });
+}
+
 function toggleHwKey(key, displaySubject, displayDay) {
   const hEl = document.getElementById('homework');
   const titleEl = document.getElementById('homework-title');
@@ -1807,7 +1842,7 @@ function toggleHwKey(key, displaySubject, displayDay) {
   openHwKey = key;
   titleEl.textContent = `Домашнее задание: ${displaySubject || ''} (${displayDay || ''})`;
   titleEl.style.display = 'block';
-  hEl.innerHTML = renderHwGroup(hwByKey[key] || []);
+  hEl.innerHTML = renderHwGroup(labelHwForDay(hwByKey[key] || [], displayDay));
   hEl.classList.add('open');
   hEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
@@ -1916,7 +1951,7 @@ async function load() {
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
-  const subjectsByDay = {};
+  subjectsByDay = {};
   data.schedule.forEach(s => {
     if (!s.day_of_week || !s.subject) return;
     if (!subjectsByDay[s.day_of_week]) subjectsByDay[s.day_of_week] = new Set();
@@ -1954,7 +1989,8 @@ async function load() {
     });
   });
   if (openHwKey && hwByKey[openHwKey]) {
-    document.getElementById('homework').innerHTML = renderHwGroup(hwByKey[openHwKey]);
+    const openDay = openHwKey.split('|')[0];
+    document.getElementById('homework').innerHTML = renderHwGroup(labelHwForDay(hwByKey[openHwKey], openDay));
   } else if (openHwKey) {
     openHwKey = null;
     document.getElementById('homework').classList.remove('open');
