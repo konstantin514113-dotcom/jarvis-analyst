@@ -2142,6 +2142,8 @@ def _seed_manual_schedule():
         return
 
     schedule_rows = [
+        ("Понедельник", None, "Классный час", "101"),
+        ("Понедельник", None, "Русский язык", "321"),
         ("Понедельник", None, "Математика", "223"),
         ("Понедельник", None, "Биология", "114"),
         ("Понедельник", None, "Музыка", "337"),
@@ -2189,6 +2191,33 @@ def _seed_manual_schedule():
     conn.commit()
     conn.close()
     print(f"[startup] Внесено расписание вручную: {len(schedule_rows)} записей")
+
+
+def _fix_monday_schedule_5v():
+    """Разовая миграция: в исходном фото понедельника не попали первые два урока
+    (Классный час и Русский язык) — чинит уже сохранённые данные в проде."""
+    sentinel_id = "fix-monday-schedule-5v-1"
+    if _message_already_processed(sentinel_id):
+        return
+    conn = get_db()
+    conn.execute("DELETE FROM schedule WHERE day_of_week = 'Понедельник'")
+    cur = conn.execute(
+        "INSERT INTO messages (max_message_id, raw_text, has_image, received_at, parsed_json) VALUES (?, ?, ?, ?, ?)",
+        (sentinel_id, "Исправление расписания понедельника (5в) — добавлены пропущенные уроки", 1, datetime.datetime.utcnow().isoformat(), "{}"),
+    )
+    message_row_id = cur.lastrowid
+    rows = [
+        ("Классный час", "101"), ("Русский язык", "321"), ("Математика", "223"),
+        ("Биология", "114"), ("Музыка", "337"), ("Наглядная геометрия", "223"),
+    ]
+    for subject, room in rows:
+        conn.execute(
+            "INSERT INTO schedule (week_of, day_of_week, date, time, subject, room, source_message_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (None, "Понедельник", None, None, subject, room, message_row_id),
+        )
+    conn.commit()
+    conn.close()
+    print("[startup] Расписание понедельника (5в) исправлено — добавлены пропущенные уроки")
 
 
 def _seed_evgeniy_schedule():
@@ -2285,6 +2314,7 @@ def _auto_configure():
     global GREEN_API_CHAT_ID, ALLOWED_CHAT_IDS, EVGENIY_CHAT_ID
 
     _seed_manual_schedule()
+    _fix_monday_schedule_5v()
     _seed_evgeniy_schedule()
     _normalize_homework_subjects()
     _fix_bad_assigned_dates()
