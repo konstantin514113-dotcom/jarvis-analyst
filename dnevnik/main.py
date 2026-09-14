@@ -1293,7 +1293,7 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
     for (let n = 1; n <= maxNum; n++) slots.push(byNum[n] || null);
     return `
     <div class="cal-col" data-day="${day}" data-date="${dateIso}" style="${col.weekIndex > 0 ? 'opacity:.85;' : ''}">
-      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${col.date.getDate()} ${monthShort}</span>${isToday ? ' <span style="color:#0071e3;">●</span>' : ''}</div>
+      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${col.date.getDate()} ${monthShort}</span></div>
       ${slots.map((s, idx) => {
         const lessonNum = idx + 1;
         if (!s) {
@@ -1940,7 +1940,7 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
     for (let n = 1; n <= maxNum; n++) slots.push(byNum[n] || null);
     return `
     <div class="cal-col" data-day="${day}" data-date="${dateIso}" style="${col.weekIndex > 0 ? 'opacity:.85;' : ''}">
-      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${col.date.getDate()} ${monthShort}</span>${isToday ? ' <span style="color:#0071e3;">●</span>' : ''}</div>
+      <div class="cal-day">${day} <span style="opacity:.6;font-weight:400;">${col.date.getDate()} ${monthShort}</span></div>
       ${slots.map((s, idx) => {
         const lessonNum = idx + 1;
         if (!s) {
