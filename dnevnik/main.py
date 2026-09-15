@@ -2322,6 +2322,11 @@ def _auto_configure():
     _normalize_homework_subjects()
     _fix_bad_assigned_dates()
 
+    conn = get_db(EVGENIY_DB_PATH)
+    for r in conn.execute("SELECT h.subject, h.assigned_date, h.task, m.received_at FROM homework h LEFT JOIN messages m ON m.id = h.source_message_id WHERE h.subject LIKE '%ПРМЗ%' OR h.subject LIKE '%Математ%'"):
+        print(f"[debug-prmz] subject={r['subject']!r} assigned_date={r['assigned_date']!r} received_at={r['received_at']!r} task={(r['task'] or '')[:40]!r}")
+    conn.close()
+
     # 1. Найти chatId по имени, если id ещё не задан явно
     if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
         resolved_id, resolved_name = _resolve_chat_id_by_name(GREEN_API_CHAT_NAME)
