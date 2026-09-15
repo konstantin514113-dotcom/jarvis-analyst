@@ -894,6 +894,14 @@ PARENT_HTML = """<!doctype html>
 
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
+function toLocalIso(d) {
+  // Локальная дата YYYY-MM-DD — НЕ toISOString() (тот уходит в UTC и в окне 00:00-03:00
+  // по Москве сдвигает дату на день назад).
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 // Расписание звонков (в минутах от полуночи)
 const BELLS_WEEKDAY = [
@@ -1038,7 +1046,7 @@ function nextLessonDateFor(assignedDateStr, normalizedSubject, subjectsByDay) {
     d.setDate(base.getDate() + step);
     const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
     if (subjectsByDay[dayName] && subjectsByDay[dayName].has(normalizedSubject)) {
-      return d.toISOString().slice(0, 10);
+      return toLocalIso(d);
     }
   }
   return assignedDateStr; // предмет больше нигде в ближайшую неделю не встречается — оставляем как есть
@@ -1226,7 +1234,7 @@ function toggleHwKey(key, displaySubject, displayDay) {
 }
 
 function scrollToToday() {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = toLocalIso(new Date());
   let col = document.querySelector(`.cal-col[data-date="${todayIso}"]`);
   if (!col) {
     const todayName = dateToDayName(todayIso);
@@ -1270,7 +1278,7 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
   const curIdx = (now.getDay() + 6) % 7;
   const monday = new Date(now);
   monday.setDate(now.getDate() - curIdx);
-  const todayIso = now.toISOString().slice(0, 10);
+  const todayIso = toLocalIso(now);
 
   const columns = [];
   for (let i = 0; i < 14; i++) {
@@ -1283,7 +1291,7 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
 
   return columns.map(col => {
     const day = col.dayName;
-    const dateIso = col.date.toISOString().slice(0, 10);
+    const dateIso = toLocalIso(col.date);
     const isToday = dateIso === todayIso;
     const monthShort = col.date.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '');
     const byNum = {};
@@ -1546,6 +1554,14 @@ CHILD_HTML = """<!doctype html>
 
 <script>
 const DAY_ORDER = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
+function toLocalIso(d) {
+  // Локальная дата YYYY-MM-DD — НЕ toISOString() (тот уходит в UTC и в окне 00:00-03:00
+  // по Москве сдвигает дату на день назад).
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 // Расписание звонков (в минутах от полуночи)
 const BELLS_WEEKDAY = [
@@ -1690,7 +1706,7 @@ function nextLessonDateFor(assignedDateStr, normalizedSubject, subjectsByDay) {
     d.setDate(base.getDate() + step);
     const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
     if (subjectsByDay[dayName] && subjectsByDay[dayName].has(normalizedSubject)) {
-      return d.toISOString().slice(0, 10);
+      return toLocalIso(d);
     }
   }
   return assignedDateStr; // предмет больше нигде в ближайшую неделю не встречается — оставляем как есть
@@ -1874,7 +1890,7 @@ function toggleHwKey(key, displaySubject, displayDay) {
 }
 
 function scrollToToday() {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = toLocalIso(new Date());
   let col = document.querySelector(`.cal-col[data-date="${todayIso}"]`);
   if (!col) {
     const todayName = dateToDayName(todayIso);
@@ -1918,7 +1934,7 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
   const curIdx = (now.getDay() + 6) % 7;
   const monday = new Date(now);
   monday.setDate(now.getDate() - curIdx);
-  const todayIso = now.toISOString().slice(0, 10);
+  const todayIso = toLocalIso(now);
 
   const columns = [];
   for (let i = 0; i < 14; i++) {
@@ -1931,7 +1947,7 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
 
   return columns.map(col => {
     const day = col.dayName;
-    const dateIso = col.date.toISOString().slice(0, 10);
+    const dateIso = toLocalIso(col.date);
     const isToday = dateIso === todayIso;
     const monthShort = col.date.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '');
     const byNum = {};
@@ -2321,11 +2337,6 @@ def _auto_configure():
     _seed_evgeniy_schedule()
     _normalize_homework_subjects()
     _fix_bad_assigned_dates()
-
-    conn = get_db(EVGENIY_DB_PATH)
-    for r in conn.execute("SELECT h.subject, h.assigned_date, h.task, m.received_at FROM homework h LEFT JOIN messages m ON m.id = h.source_message_id WHERE h.subject LIKE '%ПРМЗ%' OR h.subject LIKE '%Математ%' OR h.subject LIKE '%Алгебр%' OR h.assigned_date >= '2026-09-15' ORDER BY h.assigned_date DESC"):
-        print(f"[debug-prmz] subject={r['subject']!r} assigned_date={r['assigned_date']!r} received_at={r['received_at']!r} task={(r['task'] or '')[:40]!r}")
-    conn.close()
 
     # 1. Найти chatId по имени, если id ещё не задан явно
     if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
