@@ -672,24 +672,6 @@ def api_data_evgeniy():
     return _api_data_impl(EVGENIY_DB_PATH, EVGENIY_TEACHER_NAME, EVGENIY_CHAT_ID)
 
 
-@app.route("/evgeniy/debug/hw")
-def debug_evgeniy_hw():
-    conn = get_db(EVGENIY_DB_PATH)
-    hw = conn.execute("SELECT subject, assigned_date, parent_seen FROM homework ORDER BY assigned_date").fetchall()
-    sched = conn.execute("SELECT day_of_week, subject FROM schedule").fetchall()
-    conn.close()
-    lines = ["HOMEWORK:"]
-    for r in hw:
-        lines.append(f"  subject={r['subject']!r} assigned_date={r['assigned_date']!r} parent_seen={r['parent_seen']!r}")
-    lines.append("SCHEDULE (day: subjects):")
-    from collections import defaultdict
-    byday = defaultdict(set)
-    for r in sched:
-        byday[r["day_of_week"]].add(r["subject"])
-    for d, subs in byday.items():
-        lines.append(f"  {d}: {sorted(subs)}")
-    return "<pre>" + "\n".join(lines) + "</pre>"
-
 
 def _api_data_impl(db_path, teacher_name, main_chat_id):
     is_child = request.args.get("role") == "child"
@@ -1051,7 +1033,7 @@ function nextLessonDateFor(assignedDateStr, normalizedSubject, subjectsByDay) {
   // задание (например, прошлой пятницы) не подсвечивало и эту пятницу тоже.
   const base = new Date(assignedDateStr + 'T00:00:00');
   if (isNaN(base)) return assignedDateStr;
-  for (let step = 1; step <= 7; step++) {
+  for (let step = 1; step <= 6; step++) {
     const d = new Date(base);
     d.setDate(base.getDate() + step);
     const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
@@ -1703,7 +1685,7 @@ function nextLessonDateFor(assignedDateStr, normalizedSubject, subjectsByDay) {
   // задание (например, прошлой пятницы) не подсвечивало и эту пятницу тоже.
   const base = new Date(assignedDateStr + 'T00:00:00');
   if (isNaN(base)) return assignedDateStr;
-  for (let step = 1; step <= 7; step++) {
+  for (let step = 1; step <= 6; step++) {
     const d = new Date(base);
     d.setDate(base.getDate() + step);
     const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
@@ -2339,17 +2321,6 @@ def _auto_configure():
     _seed_evgeniy_schedule()
     _normalize_homework_subjects()
     _fix_bad_assigned_dates()
-
-    conn = get_db(EVGENIY_DB_PATH)
-    for r in conn.execute("SELECT subject, assigned_date, parent_seen FROM homework ORDER BY assigned_date"):
-        print(f"[debug-evg-hw] subject={r['subject']!r} assigned_date={r['assigned_date']!r} parent_seen={r['parent_seen']!r}")
-    from collections import defaultdict
-    byday = defaultdict(set)
-    for r in conn.execute("SELECT day_of_week, subject FROM schedule"):
-        byday[r["day_of_week"]].add(r["subject"])
-    for d, subs in byday.items():
-        print(f"[debug-evg-sched] {d}: {sorted(subs)}")
-    conn.close()
 
     # 1. Найти chatId по имени, если id ещё не задан явно
     if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
