@@ -1305,7 +1305,7 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
         </div>`;
         }
         const key = dateIso + '|' + normalizeSubject(s.subject);
-        const isAssigned = hwAssignedSet && hwAssignedSet.has(key);
+        const isAssigned = hwAssignedSet && hwAssignedSet.has(key) && dateIso <= todayIso; // красная точка — только сегодня или в прошлом
         const isDue = hwDueSet && hwDueSet.has(key);
         const hasHw = isAssigned || isDue;
         const dots = (isAssigned ? '<span class="hw-dot hw-dot-assigned" title="Задано в этот день"></span>' : '')
@@ -1953,7 +1953,7 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
         </div>`;
         }
         const key = dateIso + '|' + normalizeSubject(s.subject);
-        const isAssigned = hwAssignedSet && hwAssignedSet.has(key);
+        const isAssigned = hwAssignedSet && hwAssignedSet.has(key) && dateIso <= todayIso; // красная точка — только сегодня или в прошлом
         const isDue = hwDueSet && hwDueSet.has(key);
         const hasHw = isAssigned || isDue;
         const dots = (isAssigned ? '<span class="hw-dot hw-dot-assigned" title="Задано в этот день"></span>' : '')
