@@ -2340,6 +2340,17 @@ def _auto_configure():
     _normalize_homework_subjects()
     _fix_bad_assigned_dates()
 
+    conn = get_db(EVGENIY_DB_PATH)
+    for r in conn.execute("SELECT subject, assigned_date, parent_seen FROM homework ORDER BY assigned_date"):
+        print(f"[debug-evg-hw] subject={r['subject']!r} assigned_date={r['assigned_date']!r} parent_seen={r['parent_seen']!r}")
+    from collections import defaultdict
+    byday = defaultdict(set)
+    for r in conn.execute("SELECT day_of_week, subject FROM schedule"):
+        byday[r["day_of_week"]].add(r["subject"])
+    for d, subs in byday.items():
+        print(f"[debug-evg-sched] {d}: {sorted(subs)}")
+    conn.close()
+
     # 1. Найти chatId по имени, если id ещё не задан явно
     if not GREEN_API_CHAT_ID and GREEN_API_CHAT_NAME and GREEN_API_ID_INSTANCE and GREEN_API_API_TOKEN:
         resolved_id, resolved_name = _resolve_chat_id_by_name(GREEN_API_CHAT_NAME)
