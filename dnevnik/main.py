@@ -2323,7 +2323,7 @@ def _auto_configure():
     _fix_bad_assigned_dates()
 
     conn = get_db(EVGENIY_DB_PATH)
-    for r in conn.execute("SELECT h.subject, h.assigned_date, h.task, m.received_at FROM homework h LEFT JOIN messages m ON m.id = h.source_message_id WHERE h.subject LIKE '%ПРМЗ%' OR h.subject LIKE '%Математ%'"):
+    for r in conn.execute("SELECT h.subject, h.assigned_date, h.task, m.received_at FROM homework h LEFT JOIN messages m ON m.id = h.source_message_id WHERE h.subject LIKE '%ПРМЗ%' OR h.subject LIKE '%Математ%' OR h.subject LIKE '%Алгебр%' OR h.assigned_date >= '2026-09-15' ORDER BY h.assigned_date DESC"):
         print(f"[debug-prmz] subject={r['subject']!r} assigned_date={r['assigned_date']!r} received_at={r['received_at']!r} task={(r['task'] or '')[:40]!r}")
     conn.close()
 
