@@ -1026,19 +1026,21 @@ function dateToDayName(dateStr) {
   return DAY_ORDER[idx];
 }
 
-function nextLessonDayFor(assignedDayName, normalizedSubject, subjectsByDay) {
-  // Ищем ближайший СЛЕДУЮЩИЙ день (после дня выдачи, по кругу через неделю), где этот
-  // предмет есть по расписанию — чтобы родитель видел домашку на дне, к которому её
-  // нужно готовить, а не только в день, когда её задали.
-  const startIdx = DAY_ORDER.indexOf(assignedDayName);
-  if (startIdx === -1) return assignedDayName;
-  for (let step = 1; step <= 6; step++) {
-    const day = DAY_ORDER[(startIdx + step) % 7];
-    if (subjectsByDay[day] && subjectsByDay[day].has(normalizedSubject)) {
-      return day;
+function nextLessonDateFor(assignedDateStr, normalizedSubject, subjectsByDay) {
+  // Ищем ТОЧНУЮ дату ближайшего следующего урока по этому предмету (после даты выдачи,
+  // до 7 дней вперёд) — по реальному календарю, а не просто по дню недели, чтобы старое
+  // задание (например, прошлой пятницы) не подсвечивало и эту пятницу тоже.
+  const base = new Date(assignedDateStr + 'T00:00:00');
+  if (isNaN(base)) return assignedDateStr;
+  for (let step = 1; step <= 7; step++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + step);
+    const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
+    if (subjectsByDay[dayName] && subjectsByDay[dayName].has(normalizedSubject)) {
+      return d.toISOString().slice(0, 10);
     }
   }
-  return assignedDayName; // предмет больше нигде на неделе не встречается — оставляем как есть
+  return assignedDateStr; // предмет больше нигде в ближайшую неделю не встречается — оставляем как есть
 }
 
 function dateNumForDay(dayName) {
@@ -1192,13 +1194,12 @@ function closeHwPanel() {
   document.getElementById('homework-title').style.display = 'none';
 }
 
-function labelHwForDay(items, displayDay) {
+function labelHwForDay(items, displayDateIso) {
   return items.map(h => {
     const normSubj = normalizeSubject(h.subject);
-    const assignedDay = dateToDayName(h.assigned_date);
-    const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
-    const isAssigned = assignedDay === displayDay;
-    const isDue = dueDay === displayDay;
+    const dueDate = nextLessonDateFor(h.assigned_date, normSubj, subjectsByDay);
+    const isAssigned = h.assigned_date === displayDateIso;
+    const isDue = dueDate === displayDateIso;
     let badge = '';
     if (isAssigned && isDue) badge = '🔴🔵 Задано и нужно к этому дню';
     else if (isAssigned) badge = '🔴 Задано в этот день';
@@ -1215,9 +1216,10 @@ function toggleHwKey(key, displaySubject, displayDay) {
     return;
   }
   openHwKey = key;
+  const dateIso = key.split('|')[0];
   titleEl.textContent = `Домашнее задание: ${displaySubject || ''} (${displayDay || ''})`;
   titleEl.style.display = 'block';
-  hEl.innerHTML = renderHwGroup(labelHwForDay(hwByKey[key] || [], displayDay));
+  hEl.innerHTML = renderHwGroup(labelHwForDay(hwByKey[key] || [], dateIso));
   hEl.classList.add('open');
   hEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
@@ -1302,14 +1304,15 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
           ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
         </div>`;
         }
-        const key = day + '|' + normalizeSubject(s.subject);
+        const key = dateIso + '|' + normalizeSubject(s.subject);
         const isAssigned = hwAssignedSet && hwAssignedSet.has(key);
         const isDue = hwDueSet && hwDueSet.has(key);
         const hasHw = isAssigned || isDue;
         const dots = (isAssigned ? '<span class="hw-dot hw-dot-assigned" title="Задано в этот день"></span>' : '')
           + (isDue ? '<span class="hw-dot hw-dot-due" title="К этому дню нужно подготовить"></span>' : '');
+        const displayLabel = `${day}, ${col.date.getDate()} ${monthShort}`;
         return `
-        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${displayLabel.replace(/'/g, "\\'")}')"` : ''}>
           <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${dots}
           ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
@@ -1355,11 +1358,10 @@ async function load() {
     subjectsByDay[s.day_of_week].add(normalizeSubject(s.subject));
   });
   const activeHw = data.homework.filter(h => !h.parent_seen && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo);
-  const hwAssignedSet = new Set(activeHw.map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject)));
+  const hwAssignedSet = new Set(activeHw.map(h => h.assigned_date + '|' + normalizeSubject(h.subject)));
   const hwDueSet = new Set(activeHw.map(h => {
     const normSubj = normalizeSubject(h.subject);
-    const assignedDay = dateToDayName(h.assigned_date);
-    return nextLessonDayFor(assignedDay, normSubj, subjectsByDay) + '|' + normSubj;
+    return nextLessonDateFor(h.assigned_date, normSubj, subjectsByDay) + '|' + normSubj;
   }));
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwAssignedSet, hwDueSet);
   if (!window.__scrolledToday) {
@@ -1375,19 +1377,18 @@ async function load() {
 
   hwByKey = {};
   data.homework.forEach(h => {
-    if (!h.subject) return;
+    if (!h.subject || !h.assigned_date) return;
     const normSubj = normalizeSubject(h.subject);
-    const assignedDay = dateToDayName(h.assigned_date);
-    const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
-    [assignedDay, dueDay].forEach(day => {
-      const key = day + '|' + normSubj;
+    const dueDate = nextLessonDateFor(h.assigned_date, normSubj, subjectsByDay);
+    [h.assigned_date, dueDate].forEach(dateIso => {
+      const key = dateIso + '|' + normSubj;
       if (!hwByKey[key]) hwByKey[key] = [];
       if (!hwByKey[key].includes(h)) hwByKey[key].push(h);
     });
   });
   if (openHwKey && hwByKey[openHwKey]) {
-    const openDay = openHwKey.split('|')[0];
-    document.getElementById('homework').innerHTML = renderHwGroup(labelHwForDay(hwByKey[openHwKey], openDay));
+    const openDate = openHwKey.split('|')[0];
+    document.getElementById('homework').innerHTML = renderHwGroup(labelHwForDay(hwByKey[openHwKey], openDate));
   } else if (openHwKey) {
     openHwKey = null;
     document.getElementById('homework').classList.remove('open');
@@ -1677,19 +1678,21 @@ function dateToDayName(dateStr) {
   return DAY_ORDER[idx];
 }
 
-function nextLessonDayFor(assignedDayName, normalizedSubject, subjectsByDay) {
-  // Ищем ближайший СЛЕДУЮЩИЙ день (после дня выдачи, по кругу через неделю), где этот
-  // предмет есть по расписанию — чтобы родитель видел домашку на дне, к которому её
-  // нужно готовить, а не только в день, когда её задали.
-  const startIdx = DAY_ORDER.indexOf(assignedDayName);
-  if (startIdx === -1) return assignedDayName;
-  for (let step = 1; step <= 6; step++) {
-    const day = DAY_ORDER[(startIdx + step) % 7];
-    if (subjectsByDay[day] && subjectsByDay[day].has(normalizedSubject)) {
-      return day;
+function nextLessonDateFor(assignedDateStr, normalizedSubject, subjectsByDay) {
+  // Ищем ТОЧНУЮ дату ближайшего следующего урока по этому предмету (после даты выдачи,
+  // до 7 дней вперёд) — по реальному календарю, а не просто по дню недели, чтобы старое
+  // задание (например, прошлой пятницы) не подсвечивало и эту пятницу тоже.
+  const base = new Date(assignedDateStr + 'T00:00:00');
+  if (isNaN(base)) return assignedDateStr;
+  for (let step = 1; step <= 7; step++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + step);
+    const dayName = DAY_ORDER[(d.getDay() + 6) % 7];
+    if (subjectsByDay[dayName] && subjectsByDay[dayName].has(normalizedSubject)) {
+      return d.toISOString().slice(0, 10);
     }
   }
-  return assignedDayName; // предмет больше нигде на неделе не встречается — оставляем как есть
+  return assignedDateStr; // предмет больше нигде в ближайшую неделю не встречается — оставляем как есть
 }
 
 function dateNumForDay(dayName) {
@@ -1839,13 +1842,12 @@ function closeHwPanel() {
   document.getElementById('homework-title').style.display = 'none';
 }
 
-function labelHwForDay(items, displayDay) {
+function labelHwForDay(items, displayDateIso) {
   return items.map(h => {
     const normSubj = normalizeSubject(h.subject);
-    const assignedDay = dateToDayName(h.assigned_date);
-    const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
-    const isAssigned = assignedDay === displayDay;
-    const isDue = dueDay === displayDay;
+    const dueDate = nextLessonDateFor(h.assigned_date, normSubj, subjectsByDay);
+    const isAssigned = h.assigned_date === displayDateIso;
+    const isDue = dueDate === displayDateIso;
     let badge = '';
     if (isAssigned && isDue) badge = '🔴🔵 Задано и нужно к этому дню';
     else if (isAssigned) badge = '🔴 Задано в этот день';
@@ -1862,9 +1864,10 @@ function toggleHwKey(key, displaySubject, displayDay) {
     return;
   }
   openHwKey = key;
+  const dateIso = key.split('|')[0];
   titleEl.textContent = `Домашнее задание: ${displaySubject || ''} (${displayDay || ''})`;
   titleEl.style.display = 'block';
-  hEl.innerHTML = renderHwGroup(labelHwForDay(hwByKey[key] || [], displayDay));
+  hEl.innerHTML = renderHwGroup(labelHwForDay(hwByKey[key] || [], dateIso));
   hEl.classList.add('open');
   hEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
@@ -1949,14 +1952,15 @@ function renderCalendar(schedule, hwAssignedSet, hwDueSet) {
           ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
         </div>`;
         }
-        const key = day + '|' + normalizeSubject(s.subject);
+        const key = dateIso + '|' + normalizeSubject(s.subject);
         const isAssigned = hwAssignedSet && hwAssignedSet.has(key);
         const isDue = hwDueSet && hwDueSet.has(key);
         const hasHw = isAssigned || isDue;
         const dots = (isAssigned ? '<span class="hw-dot hw-dot-assigned" title="Задано в этот день"></span>' : '')
           + (isDue ? '<span class="hw-dot hw-dot-due" title="К этому дню нужно подготовить"></span>' : '');
+        const displayLabel = `${day}, ${col.date.getDate()} ${monthShort}`;
         return `
-        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${day}')"` : ''}>
+        <div class="cal-lesson ${hasHw ? 'has-hw' : ''}" data-lesson-num="${lessonNum}" ${hasHw ? `onclick="toggleHwKey('${key.replace(/'/g, "\\'")}', '${(s.subject || '').replace(/'/g, "\\'")}', '${displayLabel.replace(/'/g, "\\'")}')"` : ''}>
           <span class="num">${lessonNum}.</span><span class="subj">${s.subject || ''}</span>${dots}
           ${bellRangeFor(day, lessonNum) ? `<div class="lesson-time">${bellRangeFor(day, lessonNum)}</div>` : ''}
           ${s.room ? `<div class="room">каб. ${s.room}</div>` : ''}
@@ -2002,11 +2006,10 @@ async function load() {
     subjectsByDay[s.day_of_week].add(normalizeSubject(s.subject));
   });
   const activeHw = data.homework.filter(h => !h.child_done && h.subject && h.assigned_date && new Date(h.assigned_date) >= weekAgo);
-  const hwAssignedSet = new Set(activeHw.map(h => dateToDayName(h.assigned_date) + '|' + normalizeSubject(h.subject)));
+  const hwAssignedSet = new Set(activeHw.map(h => h.assigned_date + '|' + normalizeSubject(h.subject)));
   const hwDueSet = new Set(activeHw.map(h => {
     const normSubj = normalizeSubject(h.subject);
-    const assignedDay = dateToDayName(h.assigned_date);
-    return nextLessonDayFor(assignedDay, normSubj, subjectsByDay) + '|' + normSubj;
+    return nextLessonDateFor(h.assigned_date, normSubj, subjectsByDay) + '|' + normSubj;
   }));
   document.getElementById('schedule').innerHTML = renderCalendar(data.schedule, hwAssignedSet, hwDueSet);
   if (!window.__scrolledToday) {
@@ -2022,19 +2025,18 @@ async function load() {
 
   hwByKey = {};
   data.homework.forEach(h => {
-    if (!h.subject) return;
+    if (!h.subject || !h.assigned_date) return;
     const normSubj = normalizeSubject(h.subject);
-    const assignedDay = dateToDayName(h.assigned_date);
-    const dueDay = nextLessonDayFor(assignedDay, normSubj, subjectsByDay);
-    [assignedDay, dueDay].forEach(day => {
-      const key = day + '|' + normSubj;
+    const dueDate = nextLessonDateFor(h.assigned_date, normSubj, subjectsByDay);
+    [h.assigned_date, dueDate].forEach(dateIso => {
+      const key = dateIso + '|' + normSubj;
       if (!hwByKey[key]) hwByKey[key] = [];
       if (!hwByKey[key].includes(h)) hwByKey[key].push(h);
     });
   });
   if (openHwKey && hwByKey[openHwKey]) {
-    const openDay = openHwKey.split('|')[0];
-    document.getElementById('homework').innerHTML = renderHwGroup(labelHwForDay(hwByKey[openHwKey], openDay));
+    const openDate = openHwKey.split('|')[0];
+    document.getElementById('homework').innerHTML = renderHwGroup(labelHwForDay(hwByKey[openHwKey], openDate));
   } else if (openHwKey) {
     openHwKey = null;
     document.getElementById('homework').classList.remove('open');
